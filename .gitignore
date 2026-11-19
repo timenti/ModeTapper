@@ -1,0 +1,11 @@
+**/*.exe
+**/*.json
+**/*.jsonl
+**/*.zip
+**/*.lnk
+**/*.reg
+**/*.db
+**/*.log
+**/*.bak
+**/safety/
+work/native-touch-probe.txt
