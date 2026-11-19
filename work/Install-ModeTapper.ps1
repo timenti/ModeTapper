@@ -37,10 +37,11 @@ try{
  if($stopExe -and (Test-Path -LiteralPath $stopExe)){
   Start-Process -FilePath $stopExe -ArgumentList '--stop' -WindowStyle Hidden -Wait
  }
- foreach($proc in @(Get-Process -Name ModeTapper,Luma -ErrorAction SilentlyContinue)){
-  if($proc.Path -in @($old,"$install\ModeTapper.exe")){$proc.WaitForExit(10000)|Out-Null}
+ $appPaths=@("$install\ModeTapper.exe")
+ if($old){$appPaths+=$old}
+ foreach($proc in @(Get-Process -Name ModeTapper,Luma -ErrorAction SilentlyContinue | Where-Object {$_.Path -in $appPaths})){
+  if(!$proc.WaitForExit(10000)){throw 'ModeTapper is still running; no files overwritten'}
  }
- if(Get-Process -Name ModeTapper,Luma -ErrorAction SilentlyContinue){throw 'ModeTapper is still running; no files overwritten'}
  New-Item -ItemType Directory -Path $install -Force|Out-Null
  if(Test-Path -LiteralPath "$install\ModeTapper.exe"){
   $backup=Join-Path $install ('backups\'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
@@ -67,6 +68,9 @@ try{
  }
  Copy-Item -LiteralPath $build -Destination "$install\ModeTapper.exe" -Force
  foreach($name in @('ModeTapper.ico','ModeTapper.exe.config')){Copy-Item -LiteralPath (Join-Path $project "outputs\task-screen-awake\$name") -Destination (Join-Path $install $name) -Force}
+ if(Test-Path -LiteralPath (Join-Path $project 'LICENSE')){
+  Copy-Item -LiteralPath (Join-Path $project 'LICENSE') -Destination (Join-Path $install 'LICENSE.txt') -Force
+ }
  [IO.File]::WriteAllText("$install\modetapper-managed-install.txt",'ModeTapper managed installation; sources and tests are stored separately.')
  $shell=New-Object -ComObject WScript.Shell
  $programs=[Environment]::GetFolderPath('Programs')
@@ -113,7 +117,11 @@ try{
   }while($deadline.ElapsedMilliseconds -lt 8000)
   if(!$adopted){Write-Warning 'The new ModeTapper process did not confirm the ASUS launch guard before the upgrade lease expired.'}
  }
- [pscustomobject]@{installation=$install;mode=$argument;sha256=(Get-FileHash "$install\ModeTapper.exe").Hash;startup=$startup;guardHandoff=$adopted}|ConvertTo-Json
+ $hash=[Security.Cryptography.SHA256]::Create()
+ $binary=[IO.File]::OpenRead("$install\ModeTapper.exe")
+ try{$checksum=[BitConverter]::ToString($hash.ComputeHash($binary)).Replace('-','')}
+ finally{$binary.Dispose();$hash.Dispose()}
+ [pscustomobject]@{installation=$install;mode=$argument;sha256=$checksum;startup=$startup;guardHandoff=$adopted}|ConvertTo-Json
 }finally{
  if($lease){$lease.Dispose()}
 }
