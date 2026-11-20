@@ -1,20 +1,223 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Management;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using Microsoft.Win32.SafeHandles;
 using Microsoft.Win32;
+using System.Windows.Forms;
 
 internal sealed class KeyboardLight {
+ static readonly object hardwareLock=new object();
+ static int hardwareRevision;
+ internal struct Snapshot {internal int Level,Revision;}
  internal KeyboardLight(string folder){}
  RegistryKey OpenLighting(bool writable){using(var devices=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Lighting\Devices")){if(devices!=null)foreach(string name in devices.GetSubKeyNames()){if(name.IndexOf("VID_0B05&PID_1A30&MI_04",StringComparison.OrdinalIgnoreCase)<0)continue;var device=devices.OpenSubKey(name,writable);if(device==null)continue;if(Convert.ToInt32(device.GetValue("AmbientLightingEnabled",0))!=1){device.Dispose();throw new InvalidOperationException("Включи динамическое освещение клавиатуры в настройках Windows");}return device;}}throw new InvalidOperationException("Настройки подсветки клавиатуры не найдены в Windows");}
  internal int Level {get{using(var device=OpenLighting(false))return Math.Max(0,Math.Min(100,Convert.ToInt32(device.GetValue("Brightness",100))));}}
  internal int BeginGesture(){Safety.Require();return Level;}
+ internal void WakeHardware(){
+  if(!AsusCooling.IsSupportedModel())return;
+  lock(hardwareLock){
+   ApplyHardwareLevel(3,"keyboard.vendor-hid");
+   hardwareRevision++;
+  }
+ }
+ internal Snapshot CaptureHardware(){
+  lock(hardwareLock){
+   if(Safety.Safe||!WindowsLightingEnabled()||Level==0)return new Snapshot();
+   // Aura can replace the readable report with an effect. In that case Windows supplies the on/off preference.
+   return new Snapshot{Level=AsusKeyboardBacklight.ReadLevel()??3,Revision=hardwareRevision};
+  }
+ }
+ internal void RestoreHardware(Snapshot saved){
+  lock(hardwareLock){
+   if(saved.Level==0||saved.Revision!=hardwareRevision||Safety.Safe||!WindowsLightingEnabled()||Level==0)return;
+   ApplyHardwareLevel(saved.Level,"keyboard.resume");
+  }
+ }
+ static bool WindowsLightingEnabled(){
+  return Convert.ToInt32(Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Lighting","AmbientLightingEnabled",0))==1;
+ }
+ static void ApplyHardwareLevel(int level,string operation){
+  Safety.Require();
+  string value=level.ToString(CultureInfo.InvariantCulture);
+  Safety.Audit(operation,null,value,"enable intent");
+  try{
+   AsusKeyboardBacklight.SetLevel(level);
+  }catch(Exception ex){
+   Safety.Audit(operation,null,value,ex.Message);
+   throw;
+  }
+  Safety.Audit(operation,null,value,"driver accepted enable");
+ }
  internal void Set(int value){Safety.Change("keyboard.brightness",()=>Level.ToString(),text=>SetRaw(Int32.Parse(text)),Math.Max(0,Math.Min(100,value)).ToString());}
  internal void SetRaw(int value){value=Math.Max(0,Math.Min(100,value));using(var device=OpenLighting(true)){if(Convert.ToInt32(device.GetValue("Brightness",100))!=value)device.SetValue("Brightness",value,RegistryValueKind.DWord);}}
+}
+
+internal static class AsusKeyboardBacklight {
+ const string KeyboardControlInterface=@"\\?\HID#VID_0B05&PID_1A30&MI_00&COL01#";
+ const uint DeviceName=0x20000007, PreparsedData=0x20000005;
+ const ushort VendorUsage=0x76, VendorUsagePage=0xFF31;
+
+ [StructLayout(LayoutKind.Sequential)]
+ struct Device {public IntPtr Handle;public uint Type;}
+
+ [DllImport("user32.dll",SetLastError=true)]
+ static extern uint GetRawInputDeviceList([Out]Device[] devices,ref uint count,uint entrySize);
+ [DllImport("user32.dll",SetLastError=true,CharSet=CharSet.Unicode)]
+ static extern uint GetRawInputDeviceInfo(IntPtr device,uint command,IntPtr data,ref uint size);
+ [DllImport("user32.dll",SetLastError=true,CharSet=CharSet.Unicode)]
+ static extern uint GetRawInputDeviceInfo(IntPtr device,uint command,StringBuilder data,ref uint size);
+ [DllImport("hid.dll")]
+ static extern int HidP_GetCaps(IntPtr data,[Out]byte[] caps);
+ [DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)]
+ static extern SafeFileHandle CreateFile(string path,uint access,uint share,IntPtr security,uint disposition,uint flags,IntPtr template);
+ [DllImport("hid.dll",SetLastError=true)]
+ static extern bool HidD_SetFeature(SafeFileHandle device,byte[] report,int length);
+ [DllImport("hid.dll",SetLastError=true)]
+ static extern bool HidD_GetFeature(SafeFileHandle device,[In,Out]byte[] report,int length);
+
+ internal static int? ReadLevel(){
+  return WithController<int?>((handle,report)=>{
+   report[0]=0x5A;
+   if(!HidD_GetFeature(handle,report,report.Length))throw new Win32Exception(Marshal.GetLastWin32Error());
+   // The returned feature report may be for an unrelated Aura command.
+   if(report[0]!=0x5A||report[1]!=0xBA||report[2]!=0xC5||report[3]!=0xC4||report[4]>3)return null;
+   return report[4];
+  });
+ }
+
+ internal static void SetLevel(int level){
+  WithController((handle,report)=>{
+   // Windows Dynamic Lighting still supplies the user's brightness and effect.
+   report[0]=0x5A;
+   report[1]=0xBA;
+   report[2]=0xC5;
+   report[3]=0xC4;
+   report[4]=(byte)level;
+   if(!HidD_SetFeature(handle,report,report.Length))throw new Win32Exception(Marshal.GetLastWin32Error());
+   return true;
+  });
+ }
+
+ static T WithController<T>(Func<SafeFileHandle,byte[],T> operation){
+  uint count=0,entrySize=(uint)Marshal.SizeOf(typeof(Device));
+  if(GetRawInputDeviceList(null,ref count,entrySize)==UInt32.MaxValue)throw new Win32Exception(Marshal.GetLastWin32Error());
+  var devices=new Device[count];
+  uint found=GetRawInputDeviceList(devices,ref count,entrySize);
+  if(found==UInt32.MaxValue)throw new Win32Exception(Marshal.GetLastWin32Error());
+  for(int index=0;index<found;index++){
+   var device=devices[index];
+   if(device.Type!=2)continue;
+   string path=ReadPath(device.Handle);
+   if(path==null||!path.StartsWith(KeyboardControlInterface,StringComparison.OrdinalIgnoreCase))continue;
+   int length=FeatureLength(device.Handle);
+   if(length<5)continue;
+
+   using(var handle=CreateFile(path,0,3,IntPtr.Zero,3,0,IntPtr.Zero)){
+    if(handle.IsInvalid)throw new Win32Exception(Marshal.GetLastWin32Error());
+    return operation(handle,new byte[length]);
+   }
+  }
+  throw new Win32Exception(21,"Контроллер подсветки клавиатуры ASUS недоступен");
+ }
+
+ static string ReadPath(IntPtr device){
+  uint size=0;
+  if(GetRawInputDeviceInfo(device,DeviceName,IntPtr.Zero,ref size)==UInt32.MaxValue||size==0)return null;
+  var path=new StringBuilder((int)size);
+  return GetRawInputDeviceInfo(device,DeviceName,path,ref size)==UInt32.MaxValue?null:path.ToString();
+ }
+
+ static int FeatureLength(IntPtr device){
+  uint size=0;
+  if(GetRawInputDeviceInfo(device,PreparsedData,IntPtr.Zero,ref size)==UInt32.MaxValue||size==0)return 0;
+  IntPtr buffer=Marshal.AllocHGlobal((int)size);
+  try{
+   if(GetRawInputDeviceInfo(device,PreparsedData,buffer,ref size)==UInt32.MaxValue)return 0;
+   var caps=new byte[64];
+   if(HidP_GetCaps(buffer,caps)<0||BitConverter.ToUInt16(caps,0)!=VendorUsage||BitConverter.ToUInt16(caps,2)!=VendorUsagePage)return 0;
+   return BitConverter.ToUInt16(caps,8);
+  }finally{Marshal.FreeHGlobal(buffer);}
+ }
+}
+
+internal sealed class KeyboardLightResume : NativeWindow,IDisposable {
+ const int SessionChange=0x02B1, SessionLock=0x7, SessionUnlock=0x8;
+ [DllImport("wtsapi32.dll",SetLastError=true)]
+ static extern bool WTSRegisterSessionNotification(IntPtr window,uint flags);
+ [DllImport("wtsapi32.dll")]
+ static extern bool WTSUnRegisterSessionNotification(IntPtr window);
+
+ readonly KeyboardLight keyboard;
+ readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer();
+ KeyboardLight.Snapshot? saved;
+ bool locked;
+ int attempts;
+
+ internal KeyboardLightResume(string folder){
+  keyboard=new KeyboardLight(folder);
+  CreateHandle(new CreateParams());
+  if(!WTSRegisterSessionNotification(Handle,0)){
+   int error=Marshal.GetLastWin32Error();
+   DestroyHandle();
+   timer.Dispose();
+   throw new Win32Exception(error);
+  }
+  timer.Tick+=Restore;
+ }
+
+ protected override void WndProc(ref Message message){
+  if(message.Msg==SessionChange)OnSessionChange(message.WParam.ToInt32());
+  base.WndProc(ref message);
+ }
+
+ void OnSessionChange(int reason){
+  if(reason==SessionLock){
+   if(locked)return;
+   timer.Stop();
+   Capture();
+   locked=true;
+  }else if(reason==SessionUnlock){
+   locked=false;
+   if(saved.HasValue&&saved.Value.Level>0){
+    attempts=0;
+    timer.Interval=350;
+    timer.Start();
+   }else saved=null;
+  }
+ }
+
+ void Capture(){
+  saved=new KeyboardLight.Snapshot();
+  try{saved=keyboard.CaptureHardware();}
+  catch(Exception ex){Safety.Audit("keyboard.resume",null,null,ex.Message);}
+ }
+
+ void Restore(object sender,EventArgs args){
+  timer.Stop();
+  if(!saved.HasValue||locked)return;
+  try{keyboard.RestoreHardware(saved.Value);}
+  catch(Exception ex){
+   if(ex is Win32Exception&&++attempts<3){
+    timer.Interval=750;
+    timer.Start();
+    return;
+   }
+   Safety.Audit("keyboard.resume",null,null,ex.Message);
+  }
+  saved=null;
+ }
+
+ public void Dispose(){
+  timer.Dispose();
+  WTSUnRegisterSessionNotification(Handle);
+  DestroyHandle();
+ }
 }
 
 internal sealed class DisplayLight : IDisposable {

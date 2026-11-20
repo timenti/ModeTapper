@@ -50,10 +50,6 @@ internal static class AsusCooling {
 
     internal static bool IsAvailable(){using(var handle=Open())return !IsLocked()&&HasThermalPolicy(handle);}
 
-    internal static string VendorState(){
-        return PowerModes.OnAC+":"+Registry.GetValue(ArmouryProfile,"SelectedMode",-1)+":"+Registry.GetValue(ArmouryProfile,"EnabledModes",-1);
-    }
-
     internal static int Select(AsusCoolingPreset preset){
         Safety.Require();
         if(!IsSupportedModel()||!Enum.IsDefined(typeof(AsusCoolingPreset),preset))

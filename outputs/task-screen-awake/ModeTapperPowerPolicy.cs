@@ -12,10 +12,13 @@ internal static class PlanSettings {
     const string LidBaseline="plan.lid-default.", LidHold="plan.lid-keep.", IdleHold="plan.idle-keep.", Saver="plan.energy-saver.", BoostHold="plan.boost-off.";
     const string SaverAC="max-power.ac", SaverDC="max-power.dc";
     const string SaverOverride="plan.energy-saver-switch";
+    const string DisplayHold="plan.display-keep.";
     static readonly Guid Buttons=new Guid("4f971e89-eebd-4455-a8de-9e59040e7347");
     static readonly Guid Lid=new Guid("5ca83367-6e45-459f-a27b-476b1d01c936");
     static readonly Guid Sleep=new Guid("238c9fa8-0aad-41ed-83f4-97be242c8f20");
     static readonly Guid IdleTimeout=new Guid("29f6c1db-86da-48c5-9fdb-f2b67b1f44da");
+    static readonly Guid Display=new Guid("7516b95f-f776-4464-8c53-06167f40cc99");
+    static readonly Guid DisplayTimeout=new Guid("3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e");
     static readonly Guid Energy=new Guid("de830923-a562-41af-a086-e3a2c6bad2da");
     static readonly Guid Threshold=new Guid("e69653ca-cf7f-4f05-aa73-cb833fa90ad4");
     static readonly Guid Processor=new Guid("54533251-82be-4824-96c1-47b60b740d00");
@@ -46,6 +49,7 @@ internal static class PlanSettings {
         setting=Lid;group=Buttons;scheme=Guid.Empty;
         string prefix=key.StartsWith(LidHold,StringComparison.Ordinal)?LidHold:key.StartsWith(LidBaseline,StringComparison.Ordinal)?LidBaseline:null;
         if(prefix==null&&key.StartsWith(IdleHold,StringComparison.Ordinal)){prefix=IdleHold;group=Sleep;setting=IdleTimeout;}
+        if(prefix==null&&key.StartsWith(DisplayHold,StringComparison.Ordinal)){prefix=DisplayHold;group=Display;setting=DisplayTimeout;}
         if(prefix==null&&key.StartsWith(Saver,StringComparison.Ordinal)){prefix=Saver;group=Energy;setting=Threshold;}
         if(prefix==null&&key.StartsWith(BoostHold,StringComparison.Ordinal)){prefix=BoostHold;group=Processor;setting=BoostMode;}
         return prefix!=null&&Guid.TryParse(key.Substring(prefix.Length),out scheme);
@@ -74,7 +78,7 @@ internal static class PlanSettings {
     static void Restore(string key){if(!Safety.RestoreOne(key,()=>Read(key),text=>Write(key,text),true))throw new InvalidOperationException("Настройка питания была изменена вне ModeTapper");}
     internal static void RecoverOverrides(){
         foreach(string key in Safety.TrackedKeys())
-            if(key.StartsWith(LidHold,StringComparison.Ordinal)||key.StartsWith(IdleHold,StringComparison.Ordinal)||key.StartsWith(Saver,StringComparison.Ordinal)||key.StartsWith(BoostHold,StringComparison.Ordinal)||key==SaverAC||key==SaverDC||key==SaverOverride)
+            if(key.StartsWith(LidHold,StringComparison.Ordinal)||key.StartsWith(IdleHold,StringComparison.Ordinal)||key.StartsWith(DisplayHold,StringComparison.Ordinal)||key.StartsWith(Saver,StringComparison.Ordinal)||key.StartsWith(BoostHold,StringComparison.Ordinal)||key==SaverAC||key==SaverDC||key==SaverOverride)
                 try{Safety.RestoreOne(key,()=>Read(key),text=>Write(key,text),true);}
                 catch(Exception ex){Safety.Pause("Power recovery failed: "+key+": "+ex.Message);}
     }
@@ -87,6 +91,13 @@ internal static class PlanSettings {
         catch{ReleaseLid(scheme);throw;}
     }
     internal static void ReleaseLid(string scheme){if(scheme!=null)try{Restore(LidHold+scheme);}finally{Restore(IdleHold+scheme);}}
+    internal static string KeepDisplayOn(string previous){
+        string scheme=Active().ToString();
+        if(scheme!=previous)ReleaseDisplay(previous);
+        Change(DisplayHold+scheme,"0,0");
+        return scheme;
+    }
+    internal static void ReleaseDisplay(string scheme){if(scheme!=null)Restore(DisplayHold+scheme);}
     internal static string SetEnergySaver(string previous,bool? enabled){
         if(!enabled.HasValue){if(previous!=null)Restore(Saver+previous);return null;}
         string scheme=Active().ToString();

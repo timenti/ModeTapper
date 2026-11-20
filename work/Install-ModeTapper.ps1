@@ -3,6 +3,8 @@ $ErrorActionPreference='Stop'
 $project=Split-Path -Parent $PSScriptRoot
 $build=Join-Path $PSScriptRoot 'ModeTapper.exe'
 $install=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ModeTapper'
+$savedInstall=Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\ModeTapper' -Name InstallLocation -ErrorAction SilentlyContinue
+if($savedInstall -and (Test-Path -LiteralPath (Join-Path $savedInstall 'modetapper-managed-install.txt'))){$install=$savedInstall}
 $legacy=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Luma'
 if(!$PreviousProfile -and (Test-Path -LiteralPath (Join-Path $legacy 'luma-managed-install.txt'))){$PreviousProfile=$legacy}
 if(!(Test-Path -LiteralPath $build)){throw 'Build ModeTapper first'}
@@ -10,12 +12,8 @@ if((Test-Path -LiteralPath $install) -and ((Get-Item -LiteralPath $install).Attr
 if((Test-Path -LiteralPath "$install\ModeTapper.exe") -and !(Test-Path -LiteralPath "$install\modetapper-managed-install.txt")){throw 'Existing unrecognized ModeTapper installation: preserve it for inspection'}
 if($CarouselTest -and $SafeMode){throw 'Choose either a dedicated carousel test or persistent safe mode'}
 if($InstallCameraControls){
- $setup=Join-Path $PSScriptRoot 'Install-ModeTapperCamera.ps1'
- $userSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
- $windowsPowerShell=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
- $arguments=@('-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$setup+'"'),'-UserSid',$userSid)
- $registration=Start-Process -FilePath $windowsPowerShell -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru
- if($registration.ExitCode -ne 0){throw "Camera control registration failed ($($registration.ExitCode))"}
+ $cameraWorker=Join-Path $PSScriptRoot 'ModeTapper-camera-control.exe'
+ if(!(Test-Path -LiteralPath $cameraWorker -PathType Leaf)){throw 'Build the ModeTapper camera component first'}
 }
 $old=if($PreviousProfile){Join-Path $PreviousProfile 'Luma.exe'}else{$null}
 $stopExe=if(Test-Path -LiteralPath "$install\ModeTapper.exe"){"$install\ModeTapper.exe"}else{$old}
@@ -67,6 +65,7 @@ try{
   [IO.File]::WriteAllText((Join-Path $vpnFolder 'disabled.flag'),'')
  }
  Copy-Item -LiteralPath $build -Destination "$install\ModeTapper.exe" -Force
+ if($InstallCameraControls){Copy-Item -LiteralPath $cameraWorker -Destination $install -Force}
  foreach($name in @('ModeTapper.ico','ModeTapper.exe.config')){Copy-Item -LiteralPath (Join-Path $project "outputs\task-screen-awake\$name") -Destination (Join-Path $install $name) -Force}
  if(Test-Path -LiteralPath (Join-Path $project 'LICENSE')){
   Copy-Item -LiteralPath (Join-Path $project 'LICENSE') -Destination (Join-Path $install 'LICENSE.txt') -Force

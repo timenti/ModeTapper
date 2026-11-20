@@ -5,12 +5,16 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
 #if !LUMA_CAMERA_WORKER
 using System.Windows.Forms;
+#else
+[assembly: System.Reflection.AssemblyTitle("Управление камерами ModeTapper")]
+[assembly: System.Reflection.AssemblyProduct("ModeTapper")]
 #endif
 
 internal enum CameraState { Unknown, Available, Blocked, Mixed, Missing }
@@ -118,12 +122,27 @@ internal static class CameraDevices {
                 try{acquired=gate.WaitOne(3000);}catch(AbandonedMutexException){acquired=true;}
                 if(!acquired)return 3;
                 int result;
+                try{PrepareControlDirectory();}catch(Exception){return 4;}
                 try{result=Change(operation=="block",ControlDirectory);}catch(Exception){result=4;}
                 WriteAtomic(Result(operation),Guid.NewGuid().ToString("N")+":"+result);
                 return result;
             }catch(IOException){return 4;}
             finally{if(acquired)gate.ReleaseMutex();}
         }
+    }
+
+    static void PrepareControlDirectory(){
+        string path=ControlDirectory;
+        var security=new DirectorySecurity();
+        security.SetSecurityDescriptorSddlForm("O:BAG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)");
+        if(!Directory.Exists(path))Directory.CreateDirectory(path,security);
+        var directory=new DirectoryInfo(path);
+        if((directory.Attributes&FileAttributes.ReparsePoint)!=0)throw new IOException("Некорректная папка камер.");
+        string owner=directory.GetAccessControl().GetOwner(typeof(SecurityIdentifier)).Value;
+        if(owner!="S-1-5-32-544"&&owner!="S-1-5-18")throw new IOException("Некорректный владелец папки камер.");
+        directory.SetAccessControl(security);
+        foreach(var item in directory.EnumerateFileSystemInfos())
+            if((item.Attributes&FileAttributes.ReparsePoint)!=0)throw new IOException("Некорректный файл в папке камер.");
     }
 
     static int Change(bool block,string directory){
@@ -168,6 +187,17 @@ internal static class CameraDevices {
     }
     internal static int Request(bool block){
         string operation=block?"block":"enable";
+        string worker=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"ModeTapper-camera-control.exe");
+        if(File.Exists(worker)){
+            var elevation=new ProcessStartInfo(worker,operation){UseShellExecute=true,Verb="runas",WindowStyle=ProcessWindowStyle.Hidden};
+            try{
+                using(var process=Process.Start(elevation)){
+                    if(process==null)return 7;
+                    process.WaitForExit();
+                    return process.ExitCode;
+                }
+            }catch(Win32Exception ex){if(ex.NativeErrorCode==1223)return 1223;throw;}
+        }
         string resultPath=Result(operation);
         string previous=ReadResult(resultPath);
         var launch=new ProcessStartInfo(Path.Combine(Environment.SystemDirectory,"schtasks.exe"),

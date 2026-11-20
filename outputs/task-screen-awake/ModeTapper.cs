@@ -12,7 +12,7 @@ using System.Windows.Forms;
 [assembly:System.Reflection.AssemblyTitle("ModeTapper")]
 [assembly:System.Reflection.AssemblyProduct("ModeTapper")]
 [assembly:System.Reflection.AssemblyDescription("Экран, питание и выборочные маршруты VPN")]
-[assembly:System.Reflection.AssemblyVersion("1.24.15.0")]
+[assembly:System.Reflection.AssemblyVersion("1.24.16.0")]
 
 internal static class PowerModes {
     internal static readonly Guid Best=new Guid("ded574b5-45a0-4f42-8737-46345c09c238");
@@ -53,6 +53,7 @@ internal sealed class LogState {
 }
 internal sealed class TaskReader {
     internal static readonly TimeSpan ActivityWindow=TimeSpan.FromSeconds(120);
+    static readonly TimeSpan ToolActivityWindow=TimeSpan.FromHours(1);
     internal readonly Dictionary<string,LogState> Files = new Dictionary<string,LogState>();
     internal readonly List<string> Running=new List<string>();
     readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
@@ -74,6 +75,7 @@ internal sealed class TaskReader {
         string recordType=(string)ev["type"];
         if(recordType=="response_item") {
             if(!state.Active)return;
+            state.LastActivity=when;
             string call=p.ContainsKey("call_id")?Convert.ToString(p["call_id"]):"";
             string tool=p.ContainsKey("name")?Convert.ToString(p["name"]):"";
             if(kind=="function_call"&&IsBlockingPrompt(p.ContainsKey("name")?Convert.ToString(p["name"]):"")){
@@ -130,13 +132,16 @@ internal sealed class TaskReader {
         return "Работает";
     }
     static bool IsBlockingPrompt(string name){return name=="request_user_input"||name=="request_permissions"||name=="request_approval"||name.EndsWith(".request_user_input",StringComparison.Ordinal);}
-    internal static bool IsRunning(LogState state,DateTime since,DateTime now){return state.Active&&!state.Waiting&&state.Started>=since&&state.LastActivity<=now.AddSeconds(10)&&now-state.LastActivity<=ActivityWindow;}
+    internal static bool IsRunning(LogState state,DateTime since,DateTime now){
+        TimeSpan allowedSilence=state.Tools.Count>0?ToolActivityWindow:ActivityWindow;
+        return state.Active&&!state.Waiting&&state.Started>=since&&state.LastActivity<=now.AddSeconds(10)&&now-state.LastActivity<=allowedSilence;
+    }
     internal int Read(string root, DateTime since) {
         Running.Clear();
         if (!Directory.Exists(root)) return 0;
         var fresh=new HashSet<string>();DateTime now=DateTime.UtcNow;
         foreach (string path in Directory.EnumerateFiles(root,"*.jsonl",SearchOption.AllDirectories)) {
-            if(File.GetLastWriteTimeUtc(path)<now-ActivityWindow)continue;
+            if(File.GetLastWriteTimeUtc(path)<now-ToolActivityWindow)continue;
             LogState s;
             if (!Files.TryGetValue(path,out s)) { s = new LogState(); Files[path] = s; }
             try {
@@ -189,15 +194,17 @@ internal sealed class TrayApp : ApplicationContext {
     EventWaitHandle sidePanelEvent;
     RegisteredWaitHandle sidePanelWait;
     AsusSideButton sideButton;
+    KeyboardLightResume keyboardResume;
     int mode=1, count=0;
     const uint Continuous=0x80000000u,SystemRequired=1,DisplayRequired=2;
     uint executionFlags=Continuous;
     LidMonitor lid;
-    string lidOverride;
+    string lidOverride,displayOverride;
     readonly PowerSelection powerSelection=new PowerSelection();
     readonly bool coolingSupported;
     bool coolingAvailable;
-    string coolingVendorState;
+    bool? coolingOnAc;
+    AsusCoolingPreset? preferredCooling;
     int? coolingProfile;
     string error="", lastStatus="";
     DateTime heartbeat=DateTime.MinValue;
@@ -224,6 +231,7 @@ internal sealed class TrayApp : ApplicationContext {
         coolingSupported=preview||AsusCooling.IsSupportedModel();
         coolingAvailable=preview;
         coolingProfile=preview?(int?)AsusCoolingPreset.Performance:null;
+        if(!preview&&coolingSupported)preferredCooling=LoadCoolingPreset();
         flyout=new LumaFlyout(()=>mode,SetMode,()=>powerSelection.Current,ChangePower,
             coolingSupported,()=>coolingAvailable,()=>coolingProfile,ChangeCooling,OpenArmouryCrate,
             ()=>ExitThread(),()=>preview||(vpn!=null&&vpn.Enabled),()=>vpn==null?vpnError:vpn.Error,()=>vpn!=null&&vpn.Waiting,
@@ -256,6 +264,8 @@ internal sealed class TrayApp : ApplicationContext {
         },null,Timeout.Infinite,false);
         if(coolingSupported&&!Safety.Safe)try{sideButton=new AsusSideButton(dispatcher,flyout,RefreshPanel,()=>ShowOverview(true));}
         catch(Exception ex){Safety.Audit("asus.command-center",null,null,ex.Message);}
+        if(coolingSupported&&!Safety.Safe)try{keyboardResume=new KeyboardLightResume(folder);}
+        catch(Exception ex){Safety.Audit("keyboard.resume",null,null,ex.Message);}
         timer.Interval=5000; timer.Tick+=(s,e)=>Tick();
         widgetVisibility.Tick+=(s,e)=>{
             if(codexWidget!=null)codexWidget.Pulse();
@@ -310,7 +320,8 @@ internal sealed class TrayApp : ApplicationContext {
             try{dispatcher.BeginInvoke(new Action(()=>{
                 cameraBusy=false;RefreshPanel();flyout.Invalidate();
                 if(result!=0){
-                    string message=result==6?"Переключатель камер Windows не зарегистрирован. Запусти установку ModeTapper с поддержкой камер.":
+                    if(result==1223)return;
+                    string message=result==6?"Установи компонент управления камерами через установщик ModeTapper.":
                         "Windows не подтвердила переключение камер (код "+result+").";
                     Report("camera.devices",message,true);return;
                 }
@@ -388,19 +399,39 @@ internal sealed class TrayApp : ApplicationContext {
         }
         catch(Exception ex){Report("power.select",ex.Message,interactive);}
     }
+    string CoolingPreference {get{return Path.Combine(folder,"cooling-preset.txt");}}
+    AsusCoolingPreset? LoadCoolingPreset(){
+        try{
+            AsusCoolingPreset preset;
+            if(File.Exists(CoolingPreference)&&Enum.TryParse(File.ReadAllText(CoolingPreference).Trim(),out preset)&&
+                Enum.IsDefined(typeof(AsusCoolingPreset),preset))return preset;
+        }catch(Exception ex){Safety.Audit("asus.cooling.preference",null,null,ex.Message);}
+        return null;
+    }
     void RefreshCooling(){
         if(!coolingSupported||Safety.Safe)return;
-        try{
-            coolingAvailable=AsusCooling.IsAvailable();
-            string state=AsusCooling.VendorState();
-            if(!coolingAvailable||state!=coolingVendorState)coolingProfile=null;
-            coolingVendorState=state;
-        }catch{coolingAvailable=false;coolingProfile=null;}
+        try{coolingAvailable=AsusCooling.IsAvailable();}
+        catch{coolingAvailable=false;}
+    }
+    void RestoreCoolingOnPowerChange(){
+        if(!coolingSupported||Safety.Safe)return;
+        bool onAc=PowerModes.OnAC;
+        if(coolingOnAc==onAc)return;
+        coolingOnAc=onAc;
+        coolingProfile=null;
+        if(!preferredCooling.HasValue||(!onAc&&preferredCooling==AsusCoolingPreset.Turbo))return;
+        try{coolingProfile=AsusCooling.Select(preferredCooling.Value);}
+        catch(Exception ex){Safety.Audit("asus.cooling.restore",null,preferredCooling.ToString(),ex.Message);}
     }
     void ChangeCooling(AsusCoolingPreset preset){
-        RefreshCooling();
-        try{if(coolingProfile!=(int)preset){coolingProfile=AsusCooling.Select(preset);Tick();}}
-        catch(Exception ex){coolingProfile=null;Report("asus.cooling",ex.Message,true);}
+        try{
+            bool onAc=PowerModes.OnAC;
+            coolingProfile=AsusCooling.Select(preset);
+            coolingOnAc=onAc;
+            preferredCooling=preset;
+            Safety.Atomic(CoolingPreference,preset.ToString());
+            Tick();
+        }catch(Exception ex){Report("asus.cooling",ex.Message,true);}
     }
     void OpenArmouryCrate(){
         try{AsusCooling.OpenArmouryCrate();}
@@ -439,6 +470,7 @@ internal sealed class TrayApp : ApplicationContext {
     }
     void Tick() {
         error=""; count=0;
+        RestoreCoolingOnPowerChange();
         if(codexWidget!=null)codexWidget.Tick();
         if(flyout.Visible){RefreshPanel();flyout.Invalidate();}
         if(!Safety.Safe)Clean("power-plan",powerSelection.RefreshPlan);
@@ -461,6 +493,10 @@ internal sealed class TrayApp : ApplicationContext {
             if(want&&lid!=null)lidOverride=PlanSettings.KeepLidOpen(lidOverride);
             else if(lidOverride!=null){PlanSettings.ReleaseLid(lidOverride);lidOverride=null;sleepOnRelease=lidClosed;}
         }catch(Exception ex){error="Lid policy: "+ex.Message;}
+        try{
+            if(want&&!lidClosed)displayOverride=PlanSettings.KeepDisplayOn(displayOverride);
+            else if(displayOverride!=null){PlanSettings.ReleaseDisplay(displayOverride);displayOverride=null;}
+        }catch(Exception ex){error="Display policy: "+ex.Message;}
         uint requested=Continuous|(want?SystemRequired|(lidClosed?0:DisplayRequired):0);
         if(requested!=executionFlags) {
             Safety.Audit("execution-state",executionFlags.ToString("X8"),requested.ToString("X8"),"request");
@@ -488,6 +524,7 @@ internal sealed class TrayApp : ApplicationContext {
     }
     static void Clean(string name,Action action){try{action();}catch(Exception ex){try{Safety.Audit("shutdown."+name,null,null,ex.Message);}catch{}}}
     protected override void ExitThreadCore() {
+        Clean("keyboard.resume",()=>{if(keyboardResume!=null)keyboardResume.Dispose();});
         Clean("stop-wait",()=>{if(stopWait!=null)stopWait.Unregister(null);stopEvent.Dispose();});
         Clean("side-panel",()=>{if(sidePanelWait!=null)sidePanelWait.Unregister(null);if(sidePanelEvent!=null)sidePanelEvent.Dispose();});
         Clean("side-button",()=>{if(sideButton!=null)sideButton.Dispose();});
@@ -497,6 +534,7 @@ internal sealed class TrayApp : ApplicationContext {
         Clean("device-controls",()=>{if(cameraToast!=null)cameraToast.Dispose();});
         Clean("touchpad",()=>{if(smartPad!=null)smartPad.Dispose();});Clean("home",()=>{if(home!=null)home.Dispose();});Clean("proxy",()=>{if(vpn!=null)vpn.Dispose();});
         Clean("timer",()=>{timer.Stop();timer.Dispose();});
+        Clean("display-policy",()=>PlanSettings.ReleaseDisplay(displayOverride));
         Clean("lid-policy",()=>PlanSettings.ReleaseLid(lidOverride));Clean("power-selection",powerSelection.Dispose);
         Clean("energy-status",WindowsEnergySaver.StopObserving);
         Clean("lid-monitor",()=>{if(lid!=null)lid.Dispose();});SetThreadExecutionState(Continuous);
@@ -529,6 +567,10 @@ internal sealed class TrayApp : ApplicationContext {
         if(!TaskReader.IsRunning(a,since,DateTime.UtcNow))return 12;
         if(!CarouselCatalog.IsShellSurface("ShellHost","Windows.UI.Core.CoreWindow")||CarouselCatalog.IsShellSurface("explorer","CabinetWClass"))return 13;
         if(!TestBottomEdge())return 14;
+        r.EventLine(a,prefix+"{\"type\":\"function_call\",\"name\":\"exec_command\",\"call_id\":\"long\"}}",since);
+        if(!TaskReader.IsRunning(a,since,a.LastActivity.AddMinutes(3)))return 15;
+        r.EventLine(a,prefix+"{\"type\":\"function_call_output\",\"call_id\":\"long\"}}",since);
+        if(TaskReader.IsRunning(a,since,a.LastActivity.AddMinutes(3)))return 16;
         return 0;
     }
     static bool TestBottomEdge(){
