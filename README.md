@@ -1,5 +1,7 @@
 <h1 align="center">ModeTapper для ASUS ROG Flow Z13</h1>
 
+<p align="center"><strong><a href="https://timenti.github.io/ModeTapper/">Сайт ModeTapper и демонстрации</a></strong></p>
+
 <p align="center"><strong>Жесты, карусель окон и быстрая панель для Windows 11</strong></p>
 
 <p align="center">Разработан на ASUS ROG Flow Z13 (2025, GZ302EA). Открывайте карусель боковой кнопкой, управляйте окнами и громкостью свайпами, переключайте профили охлаждения прямо из панели.</p>
