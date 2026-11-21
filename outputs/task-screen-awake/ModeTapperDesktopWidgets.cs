@@ -10,7 +10,7 @@ using System.Windows.Forms;
 
 internal sealed class CodexActivityRow {
     internal string Id,Title,Action;
-    internal bool Active;
+    internal bool Active,Waiting;
 }
 
 internal sealed class DesktopUtilityWidgets : IDisposable {
@@ -90,7 +90,10 @@ internal sealed class DesktopUtilityWidgets : IDisposable {
                     if(Moved!=null)Moved();
                 }else widget.Card.Place(widget.Corner,widget.Position);
                 if(!widget.Card.Exposed)continue;
-                if(widget.Kind==DesktopWidgetKind.Tasks)widget.Card.PresentTasks(TaskRows(reader),reader.Running.Count);
+                if(widget.Kind==DesktopWidgetKind.Tasks){
+                    var rows=TaskRows(reader);
+                    widget.Card.PresentTasks(rows,rows.Count(row=>row.Active));
+                }
                 else widget.Card.PresentTime(now);
             }catch(ExternalException){Remove(widget);}catch(InvalidOperationException){Remove(widget);}
         }
@@ -146,13 +149,17 @@ internal sealed class DesktopUtilityWidgets : IDisposable {
             rows.Add(new CodexActivityRow{Id=id,Active=true,Action=state.CurrentAction,
                 Title=threads.TryGetValue(id,out thread)?thread.Title:"Задача Codex"});
         }
-        var waiting=new HashSet<string>(reader.Files.Where(pair=>pair.Value.Active&&pair.Value.Waiting)
-            .Select(pair=>ThreadId(pair.Key)),StringComparer.OrdinalIgnoreCase);
+        foreach(var item in reader.Files.Where(pair=>pair.Value.Active&&pair.Value.Waiting).OrderByDescending(pair=>pair.Value.LastActivity)){
+            string id=ThreadId(item.Key);
+            if(id.Length==0||!added.Add(id))continue;
+            RecentThread thread;
+            rows.Add(new CodexActivityRow{Id=id,Waiting=true,Action="Ждёт ответа",
+                Title=threads.TryGetValue(id,out thread)?thread.Title:"Задача Codex"});
+        }
         int recentCount=0;
         foreach(var thread in recents){
             if(!added.Add(thread.Id))continue;
-            rows.Add(new CodexActivityRow{Id=thread.Id,Title=thread.Title,
-                Action=waiting.Contains(thread.Id)?"Ожидает ответа":""});
+            rows.Add(new CodexActivityRow{Id=thread.Id,Title=thread.Title,Action="Недавний чат"});
             if(++recentCount==20)break;
         }
         return rows.ToArray();

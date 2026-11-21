@@ -344,10 +344,10 @@ internal enum DesktopWidgetKind { Limit, Tasks, Clock, Calendar }
 internal sealed class DesktopCodexCard : Control {
     enum CalendarPage { Days, Months, Years }
     // One layout grid for all desktop cards. Combined sizes include the gap between cells.
-    const int CellWidth=200,CellHeight=88,CellGap=12,TaskRowTop=31,TaskRowHeight=25;
+    const int CellWidth=200,CellHeight=88,CellGap=12;
+    const int TaskRowTop=56,TaskRowHeight=39,TaskRowGap=5,TaskInset=12;
     static readonly Size Small=new Size(CellWidth,CellHeight);
     static readonly Size Medium=new Size(CellWidth,CellHeight*2+CellGap);
-    static readonly Size MediumWide=new Size(CellWidth+CellGap*2,CellHeight*2+CellGap);
     [DllImport("user32.dll")]static extern IntPtr GetShellWindow();
     [DllImport("user32.dll")]static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll")]static extern IntPtr GetWindowDpiAwarenessContext(IntPtr window);
@@ -366,7 +366,7 @@ internal sealed class DesktopCodexCard : Control {
     readonly System.Windows.Forms.Timer hold=new System.Windows.Forms.Timer{Interval=1000};
     readonly System.Windows.Forms.Timer touchRelease=new System.Windows.Forms.Timer{Interval=45};
     readonly System.Windows.Forms.Timer spinner=new System.Windows.Forms.Timer{Interval=45};
-    Font number,title,caption;
+    Font number,title,caption,taskTitle,taskHeading;
     float scale;
     Rectangle placement;
     CodexWeeklyLimit limit;
@@ -375,7 +375,8 @@ internal sealed class DesktopCodexCard : Control {
     CalendarPage calendarPage;
     int firstYear;
     CodexActivityRow[] activityRows=new CodexActivityRow[0];
-    int activeCount,taskOffset;
+    int activeCount,taskOffset,taskSwipeOffset;
+    bool taskSwipe;
     bool pressed,dragging,movedBeforeHold,exposed;
     int pointerId;
     long pressedAt;
@@ -432,7 +433,7 @@ internal sealed class DesktopCodexCard : Control {
             touchRelease.Stop();
             if(!pressed)Activate(touchAction);
         };
-        spinner.Tick+=(sender,args)=>{if(exposed)Invalidate(R(14,TaskRowTop,14,TaskVisibleRows*TaskRowHeight));};
+        spinner.Tick+=(sender,args)=>{if(exposed)Invalidate(R(20,TaskRowTop,16,TaskVisibleRows*TaskRowHeight));};
         ScaleFonts(Math.Max(96,GetDpiForWindow(desktop))/96f);
     }
     protected override CreateParams CreateParams {
@@ -449,19 +450,20 @@ internal sealed class DesktopCodexCard : Control {
             var work=screen.WorkingArea;
             bool left=corner==WidgetCorner.TopLeft||corner==WidgetCorner.BottomLeft;
             bool top=corner==WidgetCorner.TopLeft||corner==WidgetCorner.TopRight;
-            var standard=kind==DesktopWidgetKind.Tasks?MediumWide:
-                kind==DesktopWidgetKind.Calendar?Medium:Small;
+            var standard=kind==DesktopWidgetKind.Tasks||kind==DesktopWidgetKind.Calendar?Medium:Small;
+            var grid=DesktopFolderIcons.ReadGrid(desktop,screen);
             int width=S(standard.Width),height=S(standard.Height);
+            if(kind==DesktopWidgetKind.Tasks)width=Math.Min(work.Width,width+grid.Step.Width);
             int x=saved!=null?work.Left+S(Math.Min(saved.Offset.X,work.Width)):left?work.Left:work.Right-width;
             int y=saved!=null?work.Top+S(Math.Min(saved.Offset.Y,work.Height)):top?
                 work.Top+S(18+(kind==DesktopWidgetKind.Calendar?CellHeight+CellGap:0)):work.Bottom-height-S(18);
-            PlaceAt(SnapPosition(new Point(x,y),screen,width,height),width,height);
+            PlaceAt(SnapPosition(new Point(x,y),screen,grid,width,height),width,height);
         }finally{SetThreadDpiAwarenessContext(previous);}
     }
-    Point SnapPosition(Point point,Screen screen,int width,int height){
+    Point SnapPosition(Point point,Screen screen,DesktopFolderIcons.Grid grid,int width,int height){
         var current=ScreenArea;
         var occupied=otherWidgets==null?new Rectangle[0]:otherWidgets().Where(r=>r!=current).ToArray();
-        return DesktopFolderIcons.ReadGrid(desktop,screen).Snap(point,screen.WorkingArea,new Size(width,height),occupied);
+        return grid.Snap(point,screen.WorkingArea,new Size(width,height),occupied);
     }
     bool PlaceAt(Point point,int width,int height){
         if(!ScreenToClient(desktop,ref point))return false;
@@ -486,6 +488,8 @@ internal sealed class DesktopCodexCard : Control {
         Point origin=PointToScreen(Point.Empty);
         grabOffset=new Point(point.X-origin.X,point.Y-origin.Y);
         dragging=movedBeforeHold=false;droppedPosition=null;
+        taskSwipe=kind==DesktopWidgetKind.Tasks&&id!=0&&CanScrollTasks&&grabOffset.Y>=S(TaskRowTop);
+        taskSwipeOffset=taskOffset;
         hold.Start();
         if(id==0)Capture=true;
     }
@@ -494,13 +498,16 @@ internal sealed class DesktopCodexCard : Control {
         if(!dragging){
             if(Math.Abs(point.X-pressPoint.X)>S(8)||Math.Abs(point.Y-pressPoint.Y)>S(8)){
                 movedBeforeHold=true;hold.Stop();
+                if(taskSwipe)SetTaskOffset(taskSwipeOffset+(int)Math.Round((double)(pressPoint.Y-point.Y)/S(TaskRowHeight)));
             }
             return;
         }
         Screen screen=Screen.FromPoint(point);
         Rectangle work=screen.WorkingArea;
-        var next=SnapPosition(new Point(point.X-grabOffset.X,point.Y-grabOffset.Y),screen,Width,Height);
-        if(PlaceAt(next,Width,Height))droppedPosition=new WidgetPosition(screen.DeviceName,
+        var grid=DesktopFolderIcons.ReadGrid(desktop,screen);
+        int width=kind==DesktopWidgetKind.Tasks?Math.Min(work.Width,S(CellWidth)+grid.Step.Width):Width;
+        var next=SnapPosition(new Point(point.X-grabOffset.X,point.Y-grabOffset.Y),screen,grid,width,Height);
+        if(PlaceAt(next,width,Height))droppedPosition=new WidgetPosition(screen.DeviceName,
             new Point((int)Math.Round((next.X-work.Left)/scale),(int)Math.Round((next.Y-work.Top)/scale)));
     }
     void EndPress(bool cancel){
@@ -527,13 +534,16 @@ internal sealed class DesktopCodexCard : Control {
                 ActivateCalendar(x,y);return;
             }
             if(kind==DesktopWidgetKind.Tasks){
-                if(y<TaskRowTop&&activityRows.Length>TaskVisibleRows&&x>=CardWidth-101&&x<CardWidth-50){
-                    ScrollTasks(x<CardWidth-75?-1:1);return;
+                if(y>=TaskRowTop&&CanScrollTasks&&x>=CardWidth-20){
+                    var track=TaskScrollTrack();
+                    SetTaskOffset((int)Math.Round((point.Y-track.Top)/(double)track.Height*TaskMaximumOffset));
+                    return;
                 }
                 int row=y<TaskRowTop?-1:(y-TaskRowTop)/TaskRowHeight;Guid id;
-                if(row>=0&&row<TaskVisibleRows&&taskOffset+row<activityRows.Length&&Guid.TryParse(activityRows[taskOffset+row].Id,out id)){
+                if(row>=0&&row<TaskVisibleRows&&taskOffset+row<activityRows.Length&&TaskBounds(row).Contains(point)&&Guid.TryParse(activityRows[taskOffset+row].Id,out id)){
                     CodexWidgetSource.OpenLink("codex://threads/"+id.ToString());return;
                 }
+                if(y>=TaskRowTop)return;
             }
             if(kind==DesktopWidgetKind.Limit&&x>=119){
                 CodexWidgetSource.OpenUsage();return;
@@ -542,9 +552,17 @@ internal sealed class DesktopCodexCard : Control {
         }catch(Win32Exception){}catch(COMException){}catch(FileNotFoundException){}
     }
     int CardWidth {get{return (int)Math.Round(Width/scale);}}
-    int TaskVisibleRows {get{return Math.Max(1,((int)Math.Round(Height/scale)-TaskRowTop-12)/TaskRowHeight);}}
-    void ScrollTasks(int direction){
-        taskOffset=Math.Max(0,Math.Min(Math.Max(0,activityRows.Length-TaskVisibleRows),taskOffset+direction));
+    int TaskVisibleRows {get{return Math.Max(1,((int)Math.Round(Height/scale)-TaskRowTop-TaskInset+TaskRowGap)/TaskRowHeight);}}
+    int TaskMaximumOffset {get{return Math.Max(0,activityRows.Length-TaskVisibleRows);}}
+    bool CanScrollTasks {get{return TaskMaximumOffset>0;}}
+    Rectangle TaskBounds(int row){
+        return R(TaskInset,TaskRowTop+row*TaskRowHeight,CardWidth-2*TaskInset-(CanScrollTasks?11:0),TaskRowHeight-TaskRowGap);
+    }
+    Rectangle TaskScrollTrack(){return R(CardWidth-15,TaskRowTop+1,4,TaskVisibleRows*TaskRowHeight-TaskRowGap-2);}
+    void SetTaskOffset(int offset){
+        int next=Math.Max(0,Math.Min(TaskMaximumOffset,offset));
+        if(next==taskOffset)return;
+        taskOffset=next;
         UpdateSpinner();
         PaintIfExposed();
     }
@@ -635,6 +653,10 @@ internal sealed class DesktopCodexCard : Control {
         number=new Font("Segoe UI Semibold",26*scale,FontStyle.Regular,GraphicsUnit.Pixel);
         title=new Font("Segoe UI Semibold",13*scale,FontStyle.Regular,GraphicsUnit.Pixel);
         caption=new Font("Segoe UI",11.5f*scale,FontStyle.Regular,GraphicsUnit.Pixel);
+        if(kind==DesktopWidgetKind.Tasks){
+            taskTitle=new Font("Segoe UI Semibold",14*scale,FontStyle.Regular,GraphicsUnit.Pixel);
+            taskHeading=new Font("Segoe UI Semibold",16*scale,FontStyle.Regular,GraphicsUnit.Pixel);
+        }
     }
     int S(float n){return (int)Math.Round(n*scale);}
     Rectangle R(float x,float y,float width,float height){return new Rectangle(S(x),S(y),S(width),S(height));}
@@ -671,13 +693,14 @@ internal sealed class DesktopCodexCard : Control {
             bool same=true;
             for(int i=0;i<rows.Length;i++){
                 var a=activityRows[i];var b=rows[i];
-                if(a.Id!=b.Id||a.Title!=b.Title||a.Action!=b.Action||a.Active!=b.Active){same=false;break;}
+                if(a.Id!=b.Id||a.Title!=b.Title||a.Action!=b.Action||a.Active!=b.Active||a.Waiting!=b.Waiting){same=false;break;}
             }
             if(same)return;
         }
         activityRows=rows;activeCount=count;
         taskOffset=Math.Min(taskOffset,Math.Max(0,rows.Length-TaskVisibleRows));
-        AccessibleDescription=rows.Length==0?"Нет активных задач":String.Join(", ",rows.Select(r=>r.Title));
+        AccessibleDescription="В работе: "+count+". "+(rows.Length==0?"Чатов пока нет":
+            String.Join(", ",rows.Select(r=>r.Title+" · "+r.Action)));
         UpdateSpinner();PaintIfExposed();
     }
     protected override void WndProc(ref Message message){
@@ -685,7 +708,7 @@ internal sealed class DesktopCodexCard : Control {
             int wheel=(short)(message.WParam.ToInt64()>>16);
             if(wheel!=0){
                 if(kind==DesktopWidgetKind.Calendar)MoveCalendar(wheel>0?-1:1);
-                else ScrollTasks(wheel>0?-1:1);
+                else SetTaskOffset(taskOffset-Math.Sign(wheel)*Math.Max(1,Math.Abs(wheel)/120));
             }
             message.Result=IntPtr.Zero;return;
         }
@@ -787,21 +810,7 @@ internal sealed class DesktopCodexCard : Control {
             return;
         }
         if(kind==DesktopWidgetKind.Tasks){
-            TextAt(g,"Задачи Codex",title,ink,R(15,11,157,19));
-            TextAt(g,activeCount.ToString(Russian),caption,Color.Silver,R(CardWidth-49,11,32,19),TextFormatFlags.Right);
-            if(activityRows.Length>TaskVisibleRows){
-                TextAt(g,"↑",title,taskOffset>0?ink:Color.DimGray,R(CardWidth-101,7,25,23),TextFormatFlags.HorizontalCenter);
-                TextAt(g,"↓",title,taskOffset+TaskVisibleRows<activityRows.Length?ink:Color.DimGray,R(CardWidth-75,7,25,23),TextFormatFlags.HorizontalCenter);
-            }
-            if(activityRows.Length==0){TextAt(g,"Недавних чатов нет",caption,Color.Silver,R(15,47,207,21));return;}
-            for(int i=0;i<TaskVisibleRows&&i+taskOffset<activityRows.Length;i++){
-                var row=activityRows[i+taskOffset];int y=TaskRowTop+i*TaskRowHeight;
-                if(row.Active)DrawSpinner(g,R(15,y+7,10,10));
-                else using(var mark=new Pen(Color.FromArgb(130,130,130),Math.Max(1,S(.8f))))g.DrawEllipse(mark,R(17,y+10,6,6));
-                bool detail=!String.IsNullOrEmpty(row.Action);
-                TextAt(g,row.Title,caption,row.Active?ink:Color.FromArgb(219,219,219),R(31,y+(detail?0:3),CardWidth-46,15));
-                if(detail)TextAt(g,row.Action,caption,Color.Silver,R(31,y+13,CardWidth-46,12));
-            }
+            DrawTasks(g,ink);
             return;
         }
         DateTime first=DisplayedMonth;
@@ -830,6 +839,47 @@ internal sealed class DesktopCodexCard : Control {
             TextAt(g,day.ToString(Russian),caption,today?Color.FromArgb(31,31,31):ink,R(x,y,25,19),TextFormatFlags.HorizontalCenter);
         }
     }
+    void DrawTasks(Graphics g,Color ink){
+        var badge=R(CardWidth-105,10,93,34);
+        using(var shape=TrayApp.RoundRect(badge,S(9)))
+        using(var fill=new SolidBrush(Color.FromArgb(50,50,50)))
+        using(var edge=new Pen(Color.FromArgb(72,72,72),Math.Max(1,S(.7f)))){
+            g.FillPath(fill,shape);g.DrawPath(edge,shape);
+        }
+        TextAt(g,"Задачи Codex",taskHeading,ink,R(TaskInset+2,10,CardWidth-125,34));
+        TextAt(g,activeCount.ToString(Russian),number,ink,R(CardWidth-102,9,36,35),TextFormatFlags.HorizontalCenter);
+        TextAt(g,"в работе",caption,Color.Silver,R(CardWidth-65,10,48,34));
+        using(var divider=new Pen(Color.FromArgb(66,66,66),Math.Max(1,S(.7f))))
+            g.DrawLine(divider,S(TaskInset),S(50),S(CardWidth-TaskInset),S(50));
+        if(activityRows.Length==0){
+            TextAt(g,"Чатов пока нет",taskTitle,Color.Silver,R(TaskInset,TaskRowTop,CardWidth-2*TaskInset,116),TextFormatFlags.HorizontalCenter);
+            return;
+        }
+        for(int i=0;i<TaskVisibleRows&&i+taskOffset<activityRows.Length;i++){
+            var row=activityRows[i+taskOffset];
+            var bounds=TaskBounds(i);
+            int y=TaskRowTop+i*TaskRowHeight;
+            using(var shape=TrayApp.RoundRect(bounds,S(7)))
+            using(var fill=new SolidBrush(row.Active?Color.FromArgb(49,49,49):Color.FromArgb(39,39,39)))
+                g.FillPath(fill,shape);
+            if(row.Active)DrawSpinner(g,R(22,y+11,12,12));
+            else using(var mark=new SolidBrush(row.Waiting?Color.FromArgb(236,191,104):Color.FromArgb(147,147,147)))
+                g.FillEllipse(mark,R(24,y+13,8,8));
+            int width=CardWidth-(CanScrollTasks?80:69);
+            TextAt(g,row.Title,taskTitle,ink,R(43,y+1,width,18));
+            TextAt(g,row.Action,caption,row.Waiting?Color.FromArgb(236,191,104):Color.Silver,R(43,y+18,width,14));
+        }
+        if(!CanScrollTasks)return;
+        var track=TaskScrollTrack();
+        int height=Math.Max(S(13),track.Height*TaskVisibleRows/activityRows.Length);
+        var thumb=new Rectangle(track.X,track.Y+(track.Height-height)*taskOffset/TaskMaximumOffset,track.Width,height);
+        using(var rail=TrayApp.RoundRect(track,track.Width/2f))
+        using(var knob=TrayApp.RoundRect(thumb,thumb.Width/2f))
+        using(var railFill=new SolidBrush(Color.FromArgb(53,53,53)))
+        using(var knobFill=new SolidBrush(Color.FromArgb(134,134,134))){
+            g.FillPath(railFill,rail);g.FillPath(knobFill,knob);
+        }
+    }
     void DrawCalendarChoices(Graphics g,DateTime first,Color ink){
         for(int i=0;i<12;i++){
             int x=11+(i%3)*59,y=40+(i/3)*29;
@@ -852,6 +902,9 @@ internal sealed class DesktopCodexCard : Control {
     static void TextAt(Graphics g,string text,Font font,Color color,Rectangle bounds,TextFormatFlags align=TextFormatFlags.Left){
         TextRenderer.DrawText(g,text,font,bounds,color,align|TextFormatFlags.NoPadding|TextFormatFlags.NoPrefix|TextFormatFlags.SingleLine|TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis);
     }
-    void DisposeFonts(){if(number!=null){number.Dispose();title.Dispose();caption.Dispose();}}
+    void DisposeFonts(){
+        if(number!=null){number.Dispose();title.Dispose();caption.Dispose();}
+        if(taskTitle!=null){taskTitle.Dispose();taskHeading.Dispose();}
+    }
     protected override void Dispose(bool disposing){if(disposing){EndPress(true);hold.Dispose();touchRelease.Dispose();spinner.Dispose();DisposeFonts();if(icon!=null)icon.Dispose();}base.Dispose(disposing);}
 }

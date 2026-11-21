@@ -29,10 +29,10 @@ internal sealed class LumaFlyout : Form {
     }
 
     enum Item { Always, Tasks, ScreenOff, Rotation, Economy, Balance, Maximum, Armoury, Silent, Performance, Turbo,
-        Routing, Sites, Happ, Touchpad, Home, Edges, Animations, Zoom, CodexWidget, TasksWidget, ClockWidget, CalendarWidget, CameraOpen, CameraBlock }
+        Routing, Sites, Happ, Touchpad, Home, Edges, Animations, Zoom, CodexWidget, TasksWidget, ClockWidget, CalendarWidget, CameraOpen, CameraBlock, Update, ManualDownload }
     enum IconKind { Screen, Gauge, Fan, Shield, Gestures, Touchpad, Home, Edges, Plug, Battery, Animations, Zoom, Widgets, Camera }
 
-    const int MenuWidth=356, MenuHeight=772, ContentInset=20, ContentWidth=316, TileWidth=100, TileStep=108;
+    const int MenuWidth=356, MenuHeight=842, ContentInset=20, ContentWidth=316, TileWidth=100, TileStep=108;
     const int ScreenY=15, PowerY=152, CoolingY=249, VpnY=346, GesturesY=460, WidgetsY=556, CameraY=667;
     static readonly string versionLabel="ModeTapper "+typeof(LumaFlyout).Assembly.GetName().Version.ToString(3);
     static readonly string[] screenLabels={"Всегда включён","Во время задач","Выключено"};
@@ -65,6 +65,7 @@ internal sealed class LumaFlyout : Form {
     readonly Action<AsusCoolingPreset> setCooling;
     readonly Action openArmoury,quit,resume,toggleVpn,editSites,openHapp,toggleTouchpad,toggleHome,toggleEdges,toggleAnimations,toggleZoom;
     readonly bool showCooling,showVpn,showCameras;
+    readonly ModeTapperUpdates updates;
     readonly ToolTip tips=new ToolTip{InitialDelay=550,ReshowDelay=200,AutoPopDelay=5000};
     readonly MouseHookProc outsidePress;
     readonly CarouselFrameClock slide;
@@ -88,7 +89,7 @@ internal sealed class LumaFlyout : Form {
         Func<bool> touchpad,Action touchpadToggle,Func<bool> home,Action homeToggle,Func<bool> edges,Action edgesToggle,
         Func<bool> animations,Action animationsToggle,Func<bool> zoom,Action zoomToggle,
         Func<DesktopWidgetKind,bool> widget,Action<DesktopWidgetKind> widgetToggle,Func<bool> paused,Action resumeLuma,
-        Func<bool?> rotation,Action rotationToggle,bool camerasInstalled,Func<CameraState> camera,Func<bool> busy,Func<bool> locked,Action cameraOpen,Action cameraToggle){
+        Func<bool?> rotation,Action rotationToggle,bool camerasInstalled,Func<CameraState> camera,Func<bool> busy,Func<bool> locked,Action cameraOpen,Action cameraToggle,ModeTapperUpdates updates){
         getMode=mode;setMode=screenMode;getPower=power;setPower=powerMode;
         showCooling=coolingSupported;getCoolingAvailability=coolingAvailability;getCooling=cooling;setCooling=coolingMode;openArmoury=armoury;
         showVpn=vpnInstalled;showCameras=camerasInstalled;
@@ -99,6 +100,7 @@ internal sealed class LumaFlyout : Form {
         getWidget=widget;toggleWidget=widgetToggle;
         getRotation=rotation;toggleRotation=rotationToggle;getCamera=camera;cameraBusy=busy;cameraLocked=locked;
         openCamera=cameraOpen;toggleCamera=cameraToggle;
+        this.updates=updates;
         quit=exit;isPaused=paused;resume=resumeLuma;
         outsidePress=OnMouseHook;
         Text="ModeTapper";FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=false;StartPosition=FormStartPosition.Manual;
@@ -183,7 +185,7 @@ internal sealed class LumaFlyout : Form {
         slideDisplay=display;
         slideWorkArea=area;
         displayRotation=rotation;
-        Fit(FillsSide(display)?display:area);
+        Fit(area);
         EdgePlacement(slideDisplay,Size,rotation,out edgeLocation,out edgeOrigin);
         var swept=Rectangle.Union(new Rectangle(edgeOrigin,Size),new Rectangle(edgeLocation,Size));
         clipSlide=false;
@@ -339,18 +341,23 @@ internal sealed class LumaFlyout : Form {
             int slot=index-(int)Item.CodexWidget;
             return R(ContentInset+(slot%2)*162,WidgetsY+31+38*(slot/2)+AfterVpn,154,33);
         }
+        if(item==Item.Update)return R(ContentInset,768+FooterOffset,updates.ManualAvailable?193:ContentWidth,32);
+        if(item==Item.ManualDownload)return R(221,768+FooterOffset,115,32);
         if(item>=Item.CameraOpen)return R(item==Item.CameraOpen?ContentInset:182,CameraY+31+AfterVpn,154,33);
         return R(ContentInset+64*(index-(int)Item.Touchpad),GesturesY+26+AfterVpn,60,54);
     }
     Rectangle Tile(int column,int y){return R(ContentInset+TileStep*column,y,TileWidth,54);}
 
     bool IsVisible(Item item){
+        if(item==Item.ManualDownload)return updates.ManualAvailable;
+        if(item==Item.Update)return true;
         if(item>=Item.CameraOpen)return showCameras;
         if(item>=Item.Routing&&item<=Item.Happ)return showVpn;
         return showCooling||item<Item.Armoury||item>Item.Turbo;
     }
     bool IsEnabled(Item item){
         if(item==Item.Rotation)return getRotation().HasValue;
+        if(item==Item.Update)return updates.CanAct;
         if(item==Item.CameraOpen)return !cameraBusy()&&(getCamera()==CameraState.Available||getCamera()==CameraState.Mixed);
         if(item==Item.CameraBlock)return !cameraBusy()&&getCamera()!=CameraState.Unknown&&getCamera()!=CameraState.Missing;
         if(item<Item.Silent||item>Item.Turbo)return true;
@@ -361,7 +368,7 @@ internal sealed class LumaFlyout : Form {
             for(int i=0;i<2;i++)if(PausedBounds(i).Contains(point))return i;
             return -1;
         }
-        for(int i=0;i<=(int)Item.CameraBlock;i++)if(IsVisible((Item)i)&&BoundsOf((Item)i).Contains(point))return i;
+        for(int i=0;i<=(int)Item.ManualDownload;i++)if(IsVisible((Item)i)&&BoundsOf((Item)i).Contains(point))return i;
         return -1;
     }
 
@@ -643,10 +650,14 @@ internal sealed class LumaFlyout : Form {
         DrawGestures(g);DrawWidgets(g);
         if(showCameras)DrawCamera(g);
         int footerShift=ClientSize.Height-S(HeightInDip);
-        var footer=R(ContentInset,743+FooterOffset,ContentWidth,19);
+        Divider(g,737+FooterOffset);
+        TextAt(g,updates.Status,small,muted,R(ContentInset,741+FooterOffset,ContentWidth,22),TextFormatFlags.EndEllipsis);
+        ActionRow(g,Item.Update,updates.Button);
+        if(updates.ManualAvailable)ActionRow(g,Item.ManualDownload,"Скачать вручную");
+        var footer=R(ContentInset,814+FooterOffset,ContentWidth,19);
         var transform=g.Save();
         g.TranslateTransform(0,footerShift);
-        Divider(g,737+FooterOffset);
+        Divider(g,807+FooterOffset);
         g.Restore(transform);
         footer.Offset(0,footerShift);
         TextAt(g,versionLabel,small,muted,footer);
@@ -706,6 +717,8 @@ internal sealed class LumaFlyout : Form {
                 toggleWidget((DesktopWidgetKind)(index-(int)Item.CodexWidget));break;
             case Item.CameraOpen:Hide();openCamera();return;
             case Item.CameraBlock:toggleCamera();break;
+            case Item.Update:updates.Run();break;
+            case Item.ManualDownload:Hide();updates.OpenRelease();return;
         }
         Invalidate();
     }
@@ -716,14 +729,14 @@ internal sealed class LumaFlyout : Form {
         if(e.KeyCode==Keys.Enter||e.KeyCode==Keys.Space){InvokeItem(keyboardItem>=0?keyboardItem:hover);e.Handled=true;return;}
         if(e.KeyCode!=Keys.Down&&e.KeyCode!=Keys.Up&&e.KeyCode!=Keys.Tab)return;
         int delta=e.KeyCode==Keys.Up||e.KeyCode==Keys.Tab&&e.Shift?-1:1;
-        int count=isPaused()?2:(int)Item.CameraBlock+1;
+        int count=isPaused()?2:(int)Item.ManualDownload+1;
         if(keyboardItem<0)keyboardItem=hover>=0?hover:delta==1?count-1:0;
         hover=-1;
         do{keyboardItem=(keyboardItem+delta+count)%count;}while(!isPaused()&&(!IsVisible((Item)keyboardItem)||!IsEnabled((Item)keyboardItem)));
         Invalidate();e.Handled=true;
     }
     internal void SavePreview(string path){
-        ResizeMenu();
+        Fit(Screen.PrimaryScreen.WorkingArea);
         using(var bitmap=new Bitmap(Width,Height)){
             DrawToBitmap(bitmap,new Rectangle(Point.Empty,Size));bitmap.Save(path,ImageFormat.Png);
         }

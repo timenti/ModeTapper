@@ -12,7 +12,9 @@ using System.Windows.Forms;
 [assembly:System.Reflection.AssemblyTitle("ModeTapper")]
 [assembly:System.Reflection.AssemblyProduct("ModeTapper")]
 [assembly:System.Reflection.AssemblyDescription("Экран, питание и выборочные маршруты VPN")]
-[assembly:System.Reflection.AssemblyVersion("1.24.18.0")]
+[assembly:System.Reflection.AssemblyCompany("TIMENTI")]
+[assembly:System.Reflection.AssemblyVersion("1.24.19.0")]
+[assembly:System.Reflection.AssemblyFileVersion("1.24.19.0")]
 
 internal static class PowerModes {
     internal static readonly Guid Best=new Guid("ded574b5-45a0-4f42-8737-46345c09c238");
@@ -175,6 +177,7 @@ internal sealed class TrayApp : ApplicationContext {
     [DllImport("kernel32.dll")] internal static extern uint SetThreadExecutionState(uint flags);
     readonly string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),".codex","sessions");
     readonly string folder = AppDomain.CurrentDomain.BaseDirectory;
+    readonly ModeTapperUpdates updates;
     readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
     readonly System.Windows.Forms.Timer widgetVisibility = new System.Windows.Forms.Timer{Interval=220};
     readonly TaskReader reader = new TaskReader();
@@ -237,6 +240,7 @@ internal sealed class TrayApp : ApplicationContext {
         if(preview)coolingAvailability=AsusCoolingAvailability.Ready;
         coolingProfile=preview?(int?)AsusCoolingPreset.Performance:null;
         if(!preview&&coolingSupported)preferredCooling=LoadCoolingPreset();
+        updates=new ModeTapperUpdates(folder,preview);
         flyout=new LumaFlyout(()=>mode,SetMode,()=>powerSelection.Current,ChangePower,
             coolingSupported,()=>coolingAvailability,()=>coolingProfile,ChangeCooling,OpenArmouryCrate,
             ()=>ExitThread(),vpnInstalled,()=>preview||(vpn!=null&&vpn.Enabled),()=>vpn==null?vpnError:vpn.Error,()=>vpn!=null&&vpn.Waiting,
@@ -247,7 +251,8 @@ internal sealed class TrayApp : ApplicationContext {
             kind=>preview||WidgetEnabled(kind),ToggleWidget,
             ()=>!preview&&Safety.Safe,ResumeFromMenu,
             ()=>preview?(bool?)false:RotationLock.Current(),ToggleRotation,
-            camerasInstalled,()=>preview?CameraState.Available:cameraState,()=>cameraBusy,()=>cameraLocked,OpenCamera,ToggleCamera);
+            camerasInstalled,()=>preview?CameraState.Available:cameraState,()=>cameraBusy,()=>cameraLocked,OpenCamera,ToggleCamera,updates);
+        updates.Changed+=()=>flyout.Invalidate();
         if(vpn!=null)vpn.Changed+=()=>flyout.Invalidate();
         if(smartPad!=null)smartPad.Changed+=()=>flyout.Invalidate();
         if(home!=null){
@@ -547,7 +552,7 @@ internal sealed class TrayApp : ApplicationContext {
         Clean("lid-policy",()=>PlanSettings.ReleaseLid(lidOverride));Clean("power-selection",powerSelection.Dispose);
         Clean("energy-status",WindowsEnergySaver.StopObserving);
         Clean("lid-monitor",()=>{if(lid!=null)lid.Dispose();});SetThreadExecutionState(Continuous);
-        Clean("ui",()=>{dispatcher.Dispose();flyout.Dispose();});
+        Clean("ui",()=>{updates.Dispose();dispatcher.Dispose();flyout.Dispose();});
         try{File.WriteAllText(Path.Combine(folder,"tray-status.json"),json.Serialize(new {mode="closed",holding=false,activeTasks=0,updatedUtc=DateTime.UtcNow.ToString("o")}));}catch{}
         base.ExitThreadCore();
     }

@@ -1,0 +1,41 @@
+name: Build ModeTapper signing candidate
+
+on:
+  push:
+    branches:
+      - 'signing/v[0-9]*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Build and verify the package
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME.Substring('signing/'.Length)
+          if ($tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Expected signing/vMAJOR.MINOR.PATCH' }
+          if (!(Test-Path -LiteralPath "docs/releases/$tag.md")) { throw "Missing release notes for $tag" }
+          ./work/Build-Installer.ps1
+          foreach ($path in 'work/ModeTapper.exe', 'work/ModeTapper-camera-control.exe', 'dist/ModeTapper.exe') {
+            $info = (Get-Item -LiteralPath $path).VersionInfo
+            if ($info.FileVersion -cne "$($tag.Substring(1)).0" -or $info.ProductName -cne 'ModeTapper' -or $info.CompanyName -cne 'TIMENTI') {
+              throw "Unexpected product, company or version in $path"
+            }
+          }
+          $test = Start-Process -FilePath (Resolve-Path 'work/ModeTapper.exe') -ArgumentList '--self-test' -Wait -PassThru
+          if ($test.ExitCode -ne 0) { throw "ModeTapper self-test failed: $($test.ExitCode)" }
+
+      - name: Upload application and camera binaries for signing
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: modetapper-unsigned-payload
+          path: |
+            work/ModeTapper.exe
+            work/ModeTapper-camera-control.exe
+          if-no-files-found: error

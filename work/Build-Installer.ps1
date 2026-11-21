@@ -1,6 +1,7 @@
 param(
     [System.Security.Cryptography.X509Certificates.X509Certificate2]$SigningCertificate,
-    [string]$TimestampServer
+    [string]$TimestampServer,
+    [switch]$UseBuiltPayload
 )
 $ErrorActionPreference = 'Stop'
 if ($SigningCertificate -and !$TimestampServer) { throw 'Укажите сервер меток времени для подписи релиза.' }
@@ -10,7 +11,7 @@ function Sign-ReleaseFile([string]$path) {
     if ($signature.Status -ne 'Valid') { throw "Не удалось проверить подпись $path ($($signature.Status))" }
 }
 $root = Split-Path -Parent $PSScriptRoot
-& (Join-Path $PSScriptRoot 'Build-ModeTapper.ps1')
+if (!$UseBuiltPayload) { & (Join-Path $PSScriptRoot 'Build-ModeTapper.ps1') }
 Sign-ReleaseFile (Join-Path $PSScriptRoot 'ModeTapper.exe')
 Sign-ReleaseFile (Join-Path $PSScriptRoot 'ModeTapper-camera-control.exe')
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -35,7 +36,7 @@ try {
     New-Item -ItemType Directory -Path $folder -Force | Out-Null
     $target = Join-Path $folder 'ModeTapper.exe'
     $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-    & $compiler /nologo /optimize+ /target:winexe /platform:x64 '/reference:System.Windows.Forms.dll' '/reference:System.Drawing.dll' '/reference:Accessibility.dll' '/reference:Microsoft.CSharp.dll' '/reference:System.IO.Compression.dll' '/reference:System.IO.Compression.FileSystem.dll' ("/win32manifest:"+(Join-Path $root "$source/ModeTapper.manifest")) ("/win32icon:"+(Join-Path $root "$source/ModeTapper.ico")) ("/resource:$payload,ModeTapper.Payload") ("/out:"+$target) (Join-Path $PSScriptRoot 'ModeTapperSetup.cs')
+    & $compiler /nologo /optimize+ /target:winexe /platform:x64 '/reference:System.Windows.Forms.dll' '/reference:System.Drawing.dll' '/reference:Accessibility.dll' '/reference:Microsoft.CSharp.dll' '/reference:System.IO.Compression.dll' '/reference:System.IO.Compression.FileSystem.dll' ("/win32manifest:"+(Join-Path $root "$source/ModeTapper.manifest")) ("/win32icon:"+(Join-Path $root "$source/ModeTapper.ico")) ("/resource:$payload,ModeTapper.Payload") ("/out:"+$target) (Join-Path $PSScriptRoot 'ModeTapperSetup.cs') (Join-Path $root "$source/ModeTapperUpdatePublisher.cs")
     if ($LASTEXITCODE -ne 0) { throw 'Сборка установщика завершилась ошибкой' }
     $test = Start-Process -FilePath $target -ArgumentList '--verify-package' -WindowStyle Hidden -PassThru -Wait
     if ($test.ExitCode -ne 0) { throw 'Проверка содержимого установщика завершилась ошибкой' }
