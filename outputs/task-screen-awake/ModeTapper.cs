@@ -202,8 +202,9 @@ internal sealed class TrayApp : ApplicationContext {
     string lidOverride,displayOverride;
     readonly PowerSelection powerSelection=new PowerSelection();
     readonly bool coolingSupported;
-    bool coolingAvailable;
+    AsusCoolingAvailability coolingAvailability;
     bool? coolingOnAc;
+    bool coolingRestorePending;
     AsusCoolingPreset? preferredCooling;
     int? coolingProfile;
     string error="", lastStatus="";
@@ -229,11 +230,11 @@ internal sealed class TrayApp : ApplicationContext {
             }catch(Exception ex){Report("animations.start",ex.Message,false);}
         }else if(!preview&&uiTest){home=new HomeIndicator(folder,dispatcher,true);}
         coolingSupported=preview||AsusCooling.IsSupportedModel();
-        coolingAvailable=preview;
+        if(preview)coolingAvailability=AsusCoolingAvailability.Ready;
         coolingProfile=preview?(int?)AsusCoolingPreset.Performance:null;
         if(!preview&&coolingSupported)preferredCooling=LoadCoolingPreset();
         flyout=new LumaFlyout(()=>mode,SetMode,()=>powerSelection.Current,ChangePower,
-            coolingSupported,()=>coolingAvailable,()=>coolingProfile,ChangeCooling,OpenArmouryCrate,
+            coolingSupported,()=>coolingAvailability,()=>coolingProfile,ChangeCooling,OpenArmouryCrate,
             ()=>ExitThread(),()=>preview||(vpn!=null&&vpn.Enabled),()=>vpn==null?vpnError:vpn.Error,()=>vpn!=null&&vpn.Waiting,
             ToggleVpn,EditVpnSites,OpenHapp,()=>preview||(smartPad!=null&&smartPad.Enabled),ToggleTouchpad,
             ()=>preview||(home!=null&&home.Enabled),ToggleHome,()=>preview||(home!=null&&home.EdgesEnabled),ToggleScreenEdges,
@@ -410,16 +411,18 @@ internal sealed class TrayApp : ApplicationContext {
     }
     void RefreshCooling(){
         if(!coolingSupported||Safety.Safe)return;
-        try{coolingAvailable=AsusCooling.IsAvailable();}
-        catch{coolingAvailable=false;}
-    }
-    void RestoreCoolingOnPowerChange(){
-        if(!coolingSupported||Safety.Safe)return;
         bool onAc=PowerModes.OnAC;
-        if(coolingOnAc==onAc)return;
-        coolingOnAc=onAc;
-        coolingProfile=null;
-        if(!preferredCooling.HasValue||(!onAc&&preferredCooling==AsusCoolingPreset.Turbo))return;
+        var availability=AsusCooling.Availability();
+        if(coolingOnAc!=onAc||coolingAvailability!=availability){
+            coolingOnAc=onAc;
+            coolingAvailability=availability;
+            coolingProfile=null;
+            coolingRestorePending=preferredCooling.HasValue;
+            flyout.RefreshCoolingFeedback();
+        }
+        if(availability!=AsusCoolingAvailability.Ready||!coolingRestorePending||
+            (!onAc&&preferredCooling==AsusCoolingPreset.Turbo))return;
+        coolingRestorePending=false;
         try{coolingProfile=AsusCooling.Select(preferredCooling.Value);}
         catch(Exception ex){Safety.Audit("asus.cooling.restore",null,preferredCooling.ToString(),ex.Message);}
     }
@@ -429,9 +432,10 @@ internal sealed class TrayApp : ApplicationContext {
             coolingProfile=AsusCooling.Select(preset);
             coolingOnAc=onAc;
             preferredCooling=preset;
+            coolingRestorePending=false;
             Safety.Atomic(CoolingPreference,preset.ToString());
             Tick();
-        }catch(Exception ex){Report("asus.cooling",ex.Message,true);}
+        }catch(Exception ex){RefreshCooling();Report("asus.cooling",ex.Message,true);}
     }
     void OpenArmouryCrate(){
         try{AsusCooling.OpenArmouryCrate();}
@@ -470,9 +474,9 @@ internal sealed class TrayApp : ApplicationContext {
     }
     void Tick() {
         error=""; count=0;
-        RestoreCoolingOnPowerChange();
         if(codexWidget!=null)codexWidget.Tick();
         if(flyout.Visible){RefreshPanel();flyout.Invalidate();}
+        else RefreshCooling();
         if(!Safety.Safe)Clean("power-plan",powerSelection.RefreshPlan);
         try {
             if(mode==1||utilityWidgets!=null&&utilityWidgets.TaskReadingNeeded) {
@@ -516,9 +520,9 @@ internal sealed class TrayApp : ApplicationContext {
         string desktopAnimation=desktopEffects==null?null:desktopEffects.LastEffect;
         int desktopLaunches=desktopEffects==null?0:desktopEffects.DesktopLaunches;
         int desktopLaunchFrames=desktopEffects==null?0:desktopEffects.LastDesktopFrames;
-        string key=mode+":"+count+":"+executionFlags+":"+lidClosed+":"+lidOverride+":"+powerSelection.Current+":"+saverOn+":"+profile+":"+coolingProfile+":"+animationPlus+":"+desktopAnimationReady+":"+desktopAnimation+":"+desktopLaunches+":"+error;
+        string key=mode+":"+count+":"+executionFlags+":"+lidClosed+":"+lidOverride+":"+powerSelection.Current+":"+saverOn+":"+profile+":"+coolingAvailability+":"+coolingProfile+":"+animationPlus+":"+desktopAnimationReady+":"+desktopAnimation+":"+desktopLaunches+":"+error;
         if(key!=lastStatus || (DateTime.UtcNow-heartbeat).TotalSeconds>=60) {
-            try {File.WriteAllText(Path.Combine(folder,"tray-status.json"),json.Serialize(new {mode=mode==0?"green-always":mode==1?"yellow-tasks":"red-off",activeTasks=count,holding=holding,displayHeld=(executionFlags&DisplayRequired)!=0,lidClosed=lidClosed,lidOverride=lidOverride!=null,powerProfile=profile,powerPreset=powerSelection.Current.ToString(),maxSaver=powerSelection.Current==PowerPreset.Economy,windowsEnergySaver=saverOn,coolingProfile=coolingProfile,sideButtonReady=sideButton!=null,sideButtonHoldReady=sideButton!=null&&sideButton.HoldReady,sideButtonStoreBlocked=sideButton!=null&&sideButton.StoreLaunchBlocked,animationPlus=animationPlus,desktopAnimationReady,desktopAnimation,desktopLaunches,desktopLaunchFrames,safeMode=Safety.Safe,error=error,pid=Process.GetCurrentProcess().Id,updatedUtc=DateTime.UtcNow.ToString("o")}));} catch{}
+            try {File.WriteAllText(Path.Combine(folder,"tray-status.json"),json.Serialize(new {mode=mode==0?"green-always":mode==1?"yellow-tasks":"red-off",activeTasks=count,holding=holding,displayHeld=(executionFlags&DisplayRequired)!=0,lidClosed=lidClosed,lidOverride=lidOverride!=null,powerProfile=profile,powerPreset=powerSelection.Current.ToString(),maxSaver=powerSelection.Current==PowerPreset.Economy,windowsEnergySaver=saverOn,coolingProfile=coolingProfile,coolingAvailability=coolingSupported?coolingAvailability.ToString():null,sideButtonReady=sideButton!=null,sideButtonHoldReady=sideButton!=null&&sideButton.HoldReady,sideButtonStoreBlocked=sideButton!=null&&sideButton.StoreLaunchBlocked,animationPlus=animationPlus,desktopAnimationReady,desktopAnimation,desktopLaunches,desktopLaunchFrames,safeMode=Safety.Safe,error=error,pid=Process.GetCurrentProcess().Id,updatedUtc=DateTime.UtcNow.ToString("o")}));} catch{}
             lastStatus=key;heartbeat=DateTime.UtcNow;
         }
     }

@@ -1,11 +1,14 @@
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Security;
 using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 
 internal enum AsusCoolingPreset { Performance=0, Turbo=1, Silent=2 }
+internal enum AsusCoolingAvailability { DriverUnavailable, LockedByAsus, Ready }
 
 internal static class AsusCooling {
     const uint ReadStatus=0x53545344, SetStatus=0x53564544;
@@ -46,9 +49,25 @@ internal static class AsusCooling {
         return (value&0xFFFF0000)==0x00010000;
     }
 
-    static bool IsLocked(){return Convert.ToInt32(Registry.GetValue(ArmouryProfile,"IsLocked",0))!=0;}
+    static bool IsLocked(){
+        object value=Registry.GetValue(ArmouryProfile,"IsLocked",0);
+        if(value==null)return false;
+        if(value is int)return (int)value!=0;
+        throw new InvalidOperationException("Не удалось прочитать состояние профилей ASUS.");
+    }
 
-    internal static bool IsAvailable(){using(var handle=Open())return !IsLocked()&&HasThermalPolicy(handle);}
+    internal static AsusCoolingAvailability Availability(){
+        try{
+            if(IsLocked())return AsusCoolingAvailability.LockedByAsus;
+            using(var handle=Open()){
+                return HasThermalPolicy(handle)?AsusCoolingAvailability.Ready:AsusCoolingAvailability.DriverUnavailable;
+            }
+        }catch(Win32Exception){return AsusCoolingAvailability.DriverUnavailable;}
+        catch(InvalidOperationException){return AsusCoolingAvailability.DriverUnavailable;}
+        catch(IOException){return AsusCoolingAvailability.DriverUnavailable;}
+        catch(UnauthorizedAccessException){return AsusCoolingAvailability.DriverUnavailable;}
+        catch(SecurityException){return AsusCoolingAvailability.DriverUnavailable;}
+    }
 
     internal static int Select(AsusCoolingPreset preset){
         Safety.Require();
@@ -57,7 +76,8 @@ internal static class AsusCooling {
         if(preset==AsusCoolingPreset.Turbo&&!PowerModes.OnAC)
             throw new InvalidOperationException("Турбо доступен при подключении к сети.");
         using(var handle=Open()){
-            if(IsLocked()||!HasThermalPolicy(handle))throw new InvalidOperationException("Переключение профиля охлаждения недоступно.");
+            if(IsLocked())throw new InvalidOperationException("ASUS ограничила смену профиля. Проверьте Armoury Crate.");
+            if(!HasThermalPolicy(handle))throw new InvalidOperationException("Драйвер ASUS не поддерживает переключение профиля.");
             Safety.Audit("asus.cooling",null,preset.ToString(),"intent");
             if(Call(handle,SetStatus,(uint)preset)!=1){
                 Safety.Audit("asus.cooling",null,preset.ToString(),"driver rejected preset");

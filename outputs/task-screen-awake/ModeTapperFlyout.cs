@@ -51,7 +51,7 @@ internal sealed class LumaFlyout : Form {
     readonly Func<int> getMode;
     readonly Func<PowerPreset> getPower;
     readonly Func<int?> getCooling;
-    readonly Func<bool> canSetCooling;
+    readonly Func<AsusCoolingAvailability> getCoolingAvailability;
     readonly Func<bool> isPaused,getVpn,getVpnWaiting,getTouchpad,getHome,getEdges,getAnimations,getZoom;
     readonly Func<DesktopWidgetKind,bool> getWidget;
     readonly Action<DesktopWidgetKind> toggleWidget;
@@ -83,14 +83,14 @@ internal sealed class LumaFlyout : Form {
     int slideDuration,displayRotation,placementChecks;
 
     internal LumaFlyout(Func<int> mode,Action<int> screenMode,Func<PowerPreset> power,Action<PowerPreset> powerMode,
-        bool coolingSupported,Func<bool> coolingAvailable,Func<int?> cooling,Action<AsusCoolingPreset> coolingMode,Action armoury,
+        bool coolingSupported,Func<AsusCoolingAvailability> coolingAvailability,Func<int?> cooling,Action<AsusCoolingPreset> coolingMode,Action armoury,
         Action exit,Func<bool> vpn,Func<string> vpnError,Func<bool> vpnWaiting,Action vpnToggle,Action sites,Action happ,
         Func<bool> touchpad,Action touchpadToggle,Func<bool> home,Action homeToggle,Func<bool> edges,Action edgesToggle,
         Func<bool> animations,Action animationsToggle,Func<bool> zoom,Action zoomToggle,
         Func<DesktopWidgetKind,bool> widget,Action<DesktopWidgetKind> widgetToggle,Func<bool> paused,Action resumeLuma,
         Func<bool?> rotation,Action rotationToggle,Func<CameraState> camera,Func<bool> busy,Func<bool> locked,Action cameraOpen,Action cameraToggle){
         getMode=mode;setMode=screenMode;getPower=power;setPower=powerMode;
-        showCooling=coolingSupported;canSetCooling=coolingAvailable;getCooling=cooling;setCooling=coolingMode;openArmoury=armoury;
+        showCooling=coolingSupported;getCoolingAvailability=coolingAvailability;getCooling=cooling;setCooling=coolingMode;openArmoury=armoury;
         getVpn=vpn;getVpnError=vpnError;getVpnWaiting=vpnWaiting;toggleVpn=vpnToggle;editSites=sites;openHapp=happ;
         getTouchpad=touchpad;toggleTouchpad=touchpadToggle;getHome=home;toggleHome=homeToggle;getEdges=edges;toggleEdges=edgesToggle;
         getAnimations=animations;toggleAnimations=animationsToggle;
@@ -123,7 +123,7 @@ internal sealed class LumaFlyout : Form {
 
     int S(float value){return (int)Math.Round(value*scale);}
     Rectangle R(float x,float y,float w,float h){return new Rectangle(S(x),S(y),S(w),S(h));}
-    int CoolingOffset {get{return showCooling?0:-97;}}
+    int CoolingOffset {get{return showCooling?20:-97;}}
 
     void SetScale(float value){
         if(regular!=null&&Math.Abs(value-scale)<.001f)return;
@@ -349,7 +349,7 @@ internal sealed class LumaFlyout : Form {
         if(item==Item.CameraOpen)return !cameraBusy()&&(getCamera()==CameraState.Available||getCamera()==CameraState.Mixed);
         if(item==Item.CameraBlock)return !cameraBusy()&&getCamera()!=CameraState.Unknown&&getCamera()!=CameraState.Missing;
         if(item<Item.Silent||item>Item.Turbo)return true;
-        return canSetCooling()&&(item!=Item.Turbo||PowerModes.OnAC);
+        return getCoolingAvailability()==AsusCoolingAvailability.Ready&&(item!=Item.Turbo||PowerModes.OnAC);
     }
     int Hit(Point point){
         if(isPaused()){
@@ -559,6 +559,23 @@ internal sealed class LumaFlyout : Form {
         int? current=getCooling();
         for(int i=0;i<fanPresets.Length;i++)
             Card(g,Item.Silent+i,fanLabels[i],IconKind.Fan,current==(int)fanPresets[i],accent,i);
+        string notice=CoolingNotice();
+        if(notice!=null)TextAt(g,notice,small,amber,R(ContentInset,CoolingY+86,ContentWidth,20));
+    }
+    string CoolingNotice(){
+        var state=getCoolingAvailability();
+        if(state==AsusCoolingAvailability.LockedByAsus)return "Профили заблокированы ASUS. Откройте Armoury Crate.";
+        if(state==AsusCoolingAvailability.DriverUnavailable)return "Управление охлаждением ASUS недоступно.";
+        return PowerModes.OnAC?null:"Турбо доступен от сети.";
+    }
+    internal void RefreshCoolingFeedback(){
+        if(!Visible)return;
+        if(hover>=(int)Item.Silent&&hover<=(int)Item.Turbo){
+            var item=(Item)hover;
+            Cursor=IsEnabled(item)?Cursors.Hand:Cursors.Default;
+            tips.SetToolTip(this,Hint(item));
+        }
+        Invalidate();
     }
     void DrawVpn(Graphics g){
         int offset=CoolingOffset;
@@ -631,7 +648,7 @@ internal sealed class LumaFlyout : Form {
     string Hint(Item item){
         if(item==Item.Rotation&&!getRotation().HasValue)return "Датчик поворота Windows недоступен";
         if(item==Item.CameraBlock)return "Отключает камеры в Windows, включая камеру входа по лицу";
-        if(item>=Item.Silent&&item<=Item.Turbo&&!canSetCooling())return "Профиль ASUS недоступен";
+        if(item>=Item.Silent&&item<=Item.Turbo&&getCoolingAvailability()!=AsusCoolingAvailability.Ready)return CoolingNotice();
         if(item==Item.Turbo&&!PowerModes.OnAC)return "Турбо доступен от сети";
         if(item>=Item.Silent&&item<=Item.Turbo&&getCooling()==(int)fanPresets[(int)item-(int)Item.Silent])return "Последний профиль, применённый ModeTapper";
         if(item==Item.Performance)return "Производительный профиль ASUS";
