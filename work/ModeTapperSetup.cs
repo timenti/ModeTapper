@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
@@ -13,7 +14,7 @@ using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Установка ModeTapper")]
 [assembly: AssemblyProduct("ModeTapper")]
-[assembly: AssemblyVersion("1.24.17.0")]
+[assembly: AssemblyVersion("1.24.18.0")]
 
 internal static class ModeTapperSetup
 {
@@ -37,12 +38,14 @@ internal static class ModeTapperSetup
 
 internal sealed class SetupWindow : Form
 {
+    const int DialogWidth = 560;
     static readonly Color Background = Color.FromArgb(22, 22, 22);
-    static readonly Color Surface = Color.FromArgb(31, 31, 31);
-    static readonly Color Border = Color.FromArgb(58, 58, 58);
+    static readonly Color Surface = Color.FromArgb(29, 29, 29);
+    static readonly Color Border = Color.FromArgb(64, 66, 67);
+    static readonly Color Hover = Color.FromArgb(42, 44, 44);
     static readonly Color Ink = Color.FromArgb(246, 246, 246);
-    static readonly Color Muted = Color.FromArgb(179, 179, 179);
-    static readonly Color Green = Color.FromArgb(110, 211, 157);
+    static readonly Color Muted = Color.FromArgb(174, 176, 177);
+    static readonly Color Green = Color.FromArgb(126, 216, 170);
     static readonly Color Red = Color.FromArgb(235, 125, 125);
 
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
@@ -74,85 +77,78 @@ internal sealed class SetupWindow : Form
         MaximizeBox = false;
         MinimizeBox = false;
         var working = Screen.PrimaryScreen.WorkingArea;
-        scale = Math.Min(GetDpiForSystem() / 96f, Math.Min((working.Width - 24) / 620f, (working.Height - 70) / 585f));
+        scale = Math.Min(GetDpiForSystem() / 96f, Math.Min((working.Width - 24) / DialogWidth, (working.Height - 70) / 465f));
         AutoScaleMode = AutoScaleMode.None;
-        headingFont = new Font("Segoe UI", D(35), FontStyle.Bold, GraphicsUnit.Pixel);
+        headingFont = new Font("Segoe UI Semibold", D(34), FontStyle.Regular, GraphicsUnit.Pixel);
         bodyFont = new Font("Segoe UI", D(14), FontStyle.Regular, GraphicsUnit.Pixel);
         detailFont = new Font("Segoe UI", D(13), FontStyle.Regular, GraphicsUnit.Pixel);
         titleFont = new Font("Segoe UI Semibold", D(15), FontStyle.Regular, GraphicsUnit.Pixel);
         Font = bodyFont;
-        ClientSize = new Size(D(620), D(490));
+        ClientSize = new Size(D(DialogWidth), D(430));
         BackColor = Background;
         ForeColor = Ink;
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = Inset(28, 22, 28, 20), Margin = Padding.Empty };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = Inset(26, 19, 26, 21), Margin = Padding.Empty };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         Controls.Add(layout);
 
-        var hero = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Surface, ColumnCount = 2, RowCount = 2,
-            Padding = Inset(16, 8, 14, 7), Margin = Inset(0, 0, 0, 12) };
-        hero.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(61)));
+        var hero = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
         hero.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        hero.RowStyles.Add(new RowStyle(SizeType.Percent, 66));
-        hero.RowStyles.Add(new RowStyle(SizeType.Percent, 34));
-        Bitmap logoImage;
-        using (var sizedIcon = new Icon(Icon, new Size(D(42), D(42)))) logoImage = sizedIcon.ToBitmap();
-        var logo = new PictureBox { Image = logoImage, SizeMode = PictureBoxSizeMode.CenterImage, Dock = DockStyle.Fill, Margin = Inset(0, 0, 12, 0) };
-        logo.Disposed += (sender, args) => logoImage.Dispose();
-        hero.Controls.Add(logo, 0, 0);
-        hero.SetRowSpan(logo, 2);
-        hero.Controls.Add(MakeLabel("ModeTapper", Ink, headingFont), 1, 0);
-        hero.Controls.Add(MakeLabel("Версия " + InstallFiles.PackageVersion.ToString(3) + "  ·  Windows 11 x64", Muted, detailFont), 1, 1);
-        AddRow(layout, hero, 107);
+        hero.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(190)));
+        hero.Controls.Add(MakeLabel("ModeTapper", Ink, headingFont), 0, 0);
+        var version = MakeLabel(InstallFiles.PackageVersion.ToString(3) + "  ·  Windows 11 x64", Muted, detailFont);
+        version.TextAlign = ContentAlignment.MiddleRight;
+        hero.Controls.Add(version, 1, 0);
+        AddRow(layout, hero, 46);
 
         string summary = fresh ? "Выберите папку и компоненты для первой установки." :
             newer ? "Установлена версия " + installedVersion.ToString(3) + ". Для её обслуживания нужен более новый установщик." :
             update ? "Версия " + installedVersion.ToString(3) + " будет обновлена. Ваши настройки сохранятся." :
             needsRepair ? "Найдена установка ModeTapper. Можно восстановить файлы и ярлыки." :
             "ModeTapper уже установлен. Отсюда можно добавить компоненты или восстановить файлы.";
-        AddRow(layout, MakeLabel(summary, Ink, bodyFont), 43);
+        AddRow(layout, MakeLabel(summary, Muted, bodyFont), fresh ? 34 : 48);
 
         path = new TextBox { Text = existing ?? InstallFiles.DefaultPath, BackColor = Surface, ForeColor = Ink,
-            Dock = DockStyle.Top, BorderStyle = BorderStyle.FixedSingle, Margin = Inset(0, 5, 10, 0),
+            BorderStyle = BorderStyle.None, Margin = Padding.Empty,
             ReadOnly = !fresh, AccessibleName = "Папка установки" };
-        browse = MakeButton("Выбрать…", false);
-        browse.Dock = DockStyle.Fill;
+        browse = MakeButton("Выбрать…", false, true);
         browse.Click += Browse;
         if (fresh)
         {
-            AddRow(layout, MakeLabel("Папка установки", Muted, detailFont), 21);
-            var pathRow = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Fill, Margin = Inset(0, 0, 0, 7) };
-            pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(101)));
-            pathRow.Controls.Add(path, 0, 0);
-            pathRow.Controls.Add(browse, 1, 0);
-            AddRow(layout, pathRow, 42);
+            AddRow(layout, MakeLabel("Папка установки", Ink, titleFont), 28);
+            AddRow(layout, new SetupPathField(path, browse, D(11), D(106), D(7)), 39);
         }
 
-        cameras = new SetupToggle("Управление камерами");
-        vpn = new SetupToggle("Маршрутизация VPN");
+        cameras = new SetupToggle("Управление камерами", D(42), D(23));
+        vpn = new SetupToggle("Маршрутизация VPN", D(42), D(23));
         if (!newer)
         {
             bool addCameras = fresh || !InstallFiles.HasCameras(existing);
             bool addVpn = fresh || !InstallFiles.HasVpn(existing);
             if (addCameras || addVpn)
-                AddRow(layout, MakeLabel("Дополнительные компоненты", Muted, detailFont), 26);
-            if (addCameras) AddRow(layout, Option("Управление камерами", "Включение и отключение камер из боковой панели.", cameras), 67);
-            if (addVpn) AddRow(layout, Option("Маршрутизация VPN", "Правила для сайтов через локальный прокси Happ.", vpn), 67);
+            {
+                var caption = MakeLabel("Дополнительные компоненты", Ink, titleFont);
+                caption.Margin = Inset(0, 10, 0, 0);
+                AddRow(layout, caption, 39);
+            }
+            if (addCameras) AddRow(layout, Option("Управление камерами", "Включение и отключение камер из боковой панели.", cameras), 56);
+            if (addCameras && addVpn) AddRow(layout, new Panel { BackColor = Border, Dock = DockStyle.Fill, Margin = Padding.Empty }, 1);
+            if (addVpn) AddRow(layout, Option("Маршрутизация VPN", "Правила для сайтов через локальный прокси Happ.", vpn), 56);
         }
 
         status = MakeLabel(newer ? "" : fresh ? "Компоненты можно добавить позже тем же установщиком." :
             update ? "Установленные компоненты сохранятся." : "", Muted, detailFont);
-        AddRow(layout, status, 42);
-        progress = new SetupProgress { Dock = DockStyle.Top, Height = D(5), Margin = Inset(0, 3, 0, 0), AccessibleName = "Ход установки" };
-        AddRow(layout, progress, 15);
+        status.Margin = Inset(0, 6, 0, 0);
+        AddRow(layout, status, 43);
+        progress = new SetupProgress { Dock = DockStyle.Fill, Margin = Padding.Empty, AccessibleName = "Ход установки", Visible = false };
+        AddRow(layout, progress, 2);
 
-        var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, Margin = Padding.Empty };
-        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(145)));
+        var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, Margin = Inset(0, 9, 0, 0) };
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(132)));
         actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(100)));
-        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(187)));
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(91)));
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(167)));
         repair = MakeButton("Восстановить", false);
         repair.Dock = DockStyle.Fill;
         repair.Click += (sender, args) => Install(true);
@@ -167,16 +163,15 @@ internal sealed class SetupWindow : Form
         actions.Controls.Add(repair, 0, 0);
         actions.Controls.Add(cancel, 2, 0);
         actions.Controls.Add(primary, 3, 0);
-        AddRow(layout, actions, 41);
+        AddRow(layout, actions, 49);
 
         int rowsHeight = 0;
         foreach (RowStyle row in layout.RowStyles) rowsHeight += (int)row.Height;
-        ClientSize = new Size(D(620), rowsHeight + layout.Padding.Vertical);
+        ClientSize = new Size(D(DialogWidth), rowsHeight + layout.Padding.Vertical);
         cameras.CheckedChanged += (sender, args) => UpdateAction();
         vpn.CheckedChanged += (sender, args) => UpdateAction();
         UpdateAction();
         CancelButton = cancel;
-        ActiveControl = AcceptButton as Control;
     }
 
     int D(int value) { return (int)Math.Round(value * scale); }
@@ -199,9 +194,9 @@ internal sealed class SetupWindow : Form
     Control Option(string title, string description, SetupToggle toggle)
     {
         var card = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Surface, ColumnCount = 2, RowCount = 2,
-            Padding = Inset(14, 6, 10, 6), Margin = Inset(0, 0, 0, 7) };
+            Padding = Inset(14, 6, 11, 6), Margin = Padding.Empty };
         card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(62)));
+        card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(59)));
         card.RowStyles.Add(new RowStyle(SizeType.Percent, 53));
         card.RowStyles.Add(new RowStyle(SizeType.Percent, 47));
         var name = MakeLabel(title, Ink, titleFont);
@@ -210,18 +205,23 @@ internal sealed class SetupWindow : Form
         card.Controls.Add(note, 0, 1);
         card.Controls.Add(toggle, 1, 0);
         card.SetRowSpan(toggle, 2);
-        name.Click += (s, e) => { if (toggle.Enabled) toggle.Checked = !toggle.Checked; };
-        note.Click += (s, e) => { if (toggle.Enabled) toggle.Checked = !toggle.Checked; };
+        card.Click += (s, e) => toggle.Toggle();
+        name.Click += (s, e) => toggle.Toggle();
+        note.Click += (s, e) => toggle.Toggle();
         return card;
     }
 
-    static Button MakeButton(string text, bool accent)
+    Button MakeButton(string text, bool accent, bool embedded = false)
     {
-        var button = new Button { Text = text, Margin = Padding.Empty, FlatStyle = FlatStyle.Flat,
-            BackColor = accent ? Green : Surface, ForeColor = accent ? Background : Ink, UseVisualStyleBackColor = false };
-        button.FlatAppearance.BorderColor = accent ? Green : Border;
-        button.FlatAppearance.MouseOverBackColor = accent ? Color.FromArgb(145, 225, 183) : Color.FromArgb(43, 43, 43);
-        return button;
+        return new SetupButton(accent, embedded, D(7)) { Text = text, Margin = Padding.Empty, Font = bodyFont };
+    }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        ActiveControl = AcceptButton as Control;
+        path.SelectionStart = 0;
+        path.SelectionLength = 0;
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -260,9 +260,11 @@ internal sealed class SetupWindow : Form
         primary.Enabled = repair.Enabled = cancel.Enabled = cameras.Enabled = vpn.Enabled = browse.Enabled = false;
         status.ForeColor = Muted;
         progress.Reset();
+        progress.Visible = true;
         string destination = path.Text;
         bool addCameras = cameras.Checked, addVpn = vpn.Checked;
         var updates = new Progress<KeyValuePair<int, string>>(change => {
+            if (!busy) return;
             status.Text = change.Value;
             progress.Advance(change.Key);
         });
@@ -270,6 +272,8 @@ internal sealed class SetupWindow : Form
         string error = await Task.Run(() => InstallFiles.Run(destination, addCameras, addVpn, restoring || needsRepair,
             (value, message) => report.Report(new KeyValuePair<int, string>(value, message))));
         busy = false;
+        progress.Visible = false;
+        progress.Reset();
         primary.Enabled = repair.Enabled = cancel.Enabled = true;
         if (error == null)
         {
@@ -278,7 +282,6 @@ internal sealed class SetupWindow : Form
             status.ForeColor = Green;
             status.Text = restoring || needsRepair ? "Файлы и ярлыки восстановлены. Ваши настройки сохранены." :
                 fresh || update ? "ModeTapper готов. Откройте его из меню «Пуск»." : "Компоненты добавлены. Откройте боковую панель.";
-            progress.Advance(100);
             primary.Text = "Готово";
             primary.Visible = true;
             AcceptButton = primary;
@@ -289,7 +292,6 @@ internal sealed class SetupWindow : Form
             Result = 1;
             status.ForeColor = Red;
             status.Text = error;
-            progress.Reset();
             cameras.Enabled = vpn.Enabled = true;
             path.ReadOnly = !fresh;
             browse.Enabled = fresh;
@@ -316,46 +318,179 @@ internal sealed class SetupWindow : Form
         base.Dispose(disposing);
     }
 
-    sealed class SetupToggle : CheckBox
+    static GraphicsPath Rounded(RectangleF area, float radius)
     {
-        internal SetupToggle(string name)
+        var path = new GraphicsPath();
+        float span = Math.Min(Math.Min(area.Width, area.Height), 2 * radius);
+        if (span <= 0) return path;
+        path.AddArc(area.Left, area.Top, span, span, 180, 90);
+        path.AddArc(area.Right - span, area.Top, span, span, 270, 90);
+        path.AddArc(area.Right - span, area.Bottom - span, span, span, 0, 90);
+        path.AddArc(area.Left, area.Bottom - span, span, span, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+
+    static void DrawSurface(Graphics g, RectangleF area, int radius, Color fill, Color? border)
+    {
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var path = Rounded(area, radius))
+        using (var brush = new SolidBrush(fill))
         {
+            g.FillPath(brush, path);
+            if (border.HasValue)
+                using (var pen = new Pen(border.Value)) g.DrawPath(pen, path);
+        }
+    }
+
+    sealed class SetupPathField : Panel
+    {
+        readonly TextBox field;
+        readonly Button choose;
+        readonly int inset, buttonWidth, radius;
+
+        internal SetupPathField(TextBox field, Button choose, int inset, int buttonWidth, int radius)
+        {
+            this.field = field;
+            this.choose = choose;
+            this.inset = inset;
+            this.buttonWidth = buttonWidth;
+            this.radius = radius;
+            DoubleBuffered = true;
+            ResizeRedraw = true;
+            Dock = DockStyle.Fill;
+            Margin = Padding.Empty;
+            BackColor = Background;
+            field.GotFocus += (s, e) => Invalidate();
+            field.LostFocus += (s, e) => Invalidate();
+            Controls.Add(field);
+            Controls.Add(choose);
+        }
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            base.OnLayout(e);
+            int end = ClientSize.Width - buttonWidth;
+            field.SetBounds(inset, Math.Max(0, (ClientSize.Height - field.PreferredHeight) / 2),
+                Math.Max(0, end - 2 * inset), field.PreferredHeight);
+            choose.SetBounds(Math.Max(0, end), 2, Math.Max(0, buttonWidth - 3), Math.Max(0, ClientSize.Height - 4));
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            DrawSurface(e.Graphics, new RectangleF(0.5f, 0.5f, Width - 1, Height - 1), radius, Surface, field.Focused ? Green : Border);
+        }
+    }
+
+    sealed class SetupButton : Button
+    {
+        readonly bool accent, embedded;
+        readonly int radius;
+        bool hovered;
+
+        internal SetupButton(bool accent, bool embedded, int radius)
+        {
+            this.accent = accent;
+            this.embedded = embedded;
+            this.radius = radius;
+            FlatStyle = FlatStyle.Flat;
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+            Cursor = Cursors.Hand;
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); hovered = true; Invalidate(); }
+        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hovered = false; Invalidate(); }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.Clear(embedded ? Surface : Background);
+            bool highlight = accent && Enabled;
+            Color fill = highlight ? (hovered ? Color.FromArgb(152, 229, 188) : Green) :
+                hovered && Enabled ? Hover : Surface;
+            Color? outline = !embedded && !highlight ? (Color?)Border : null;
+            if (Focused && ShowFocusCues) outline = highlight ? Ink : Green;
+            DrawSurface(e.Graphics, new RectangleF(0.5f, 0.5f, Width - 1, Height - 1), radius, fill, outline);
+            TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, highlight ? Background : Enabled ? Ink : Muted,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
+        }
+    }
+
+    sealed class SetupToggle : Control
+    {
+        readonly int trackWidth, trackHeight;
+        bool selected;
+        internal event EventHandler CheckedChanged;
+        internal bool Checked
+        {
+            get { return selected; }
+            private set
+            {
+                if (selected == value) return;
+                selected = value;
+                Invalidate();
+                AccessibilityNotifyClients(AccessibleEvents.StateChange, -1);
+                if (CheckedChanged != null) CheckedChanged(this, EventArgs.Empty);
+            }
+        }
+
+        internal SetupToggle(string name, int trackWidth, int trackHeight)
+        {
+            this.trackWidth = trackWidth;
+            this.trackHeight = trackHeight;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+                ControlStyles.Selectable, true);
             AccessibleName = name;
-            AccessibleDescription = "Переключатель дополнительного компонента";
+            AccessibleRole = AccessibleRole.CheckButton;
+            TabStop = true;
             Dock = DockStyle.Fill;
             Margin = Padding.Empty;
             Cursor = Cursors.Hand;
             BackColor = Surface;
-            DoubleBuffered = true;
+        }
+
+        internal void Toggle()
+        {
+            if (!Enabled) return;
+            Focus();
+            Checked = !Checked;
+        }
+
+        protected override void OnClick(EventArgs e) { base.OnClick(e); Toggle(); }
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.KeyData == Keys.Space)
+            {
+                e.SuppressKeyPress = true;
+                Toggle();
+            }
+            base.OnKeyDown(e);
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             e.Graphics.Clear(BackColor);
-            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            int height = Math.Min(Height - 8, Width / 2);
-            int width = height * 2;
-            if (height < 4) return;
-            var track = new Rectangle((Width - width) / 2, (Height - height) / 2, width, height);
-            using (var path = new System.Drawing.Drawing2D.GraphicsPath())
-            {
-                path.AddArc(track.X, track.Y, height, height, 90, 180);
-                path.AddArc(track.Right - height, track.Y, height, height, 270, 180);
-                path.CloseFigure();
-                using (var pigment = new SolidBrush(Checked && Enabled ? Green : Border))
-                    e.Graphics.FillPath(pigment, path);
-            }
-            int inset = Math.Max(3, height / 6);
-            int x = Checked ? track.Right - height + inset : track.Left + inset;
+            var track = new Rectangle((Width - trackWidth) / 2, (Height - trackHeight) / 2, trackWidth, trackHeight);
+            bool on = Checked && Enabled;
+            DrawSurface(e.Graphics, track, trackHeight / 2, on ? Green : Hover, Focused && ShowFocusCues ? Ink : on ? Green : Border);
+            int inset = Math.Max(2, trackHeight / 6);
+            int x = Checked ? track.Right - trackHeight + inset : track.Left + inset;
             using (var pigment = new SolidBrush(Checked && Enabled ? Background : Muted))
-                e.Graphics.FillEllipse(pigment, x, track.Top + inset, height - 2 * inset, height - 2 * inset);
-            if (Focused) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(track, 2, 2), Ink, Surface);
+                e.Graphics.FillEllipse(pigment, x, track.Top + inset, trackHeight - 2 * inset, trackHeight - 2 * inset);
         }
 
-        protected override void OnCheckedChanged(EventArgs e) { base.OnCheckedChanged(e); Invalidate(); }
         protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
         protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
+        protected override void OnEnabledChanged(EventArgs e) { base.OnEnabledChanged(e); Invalidate(); }
+
+        protected override AccessibleObject CreateAccessibilityInstance() { return new ToggleAccessibility(this); }
+
+        sealed class ToggleAccessibility : ControlAccessibleObject
+        {
+            readonly SetupToggle toggle;
+            internal ToggleAccessibility(SetupToggle toggle) : base(toggle) { this.toggle = toggle; }
+            public override AccessibleStates State { get { return base.State | (toggle.Checked ? AccessibleStates.Checked : AccessibleStates.None); } }
+            public override string DefaultAction { get { return toggle.Checked ? "Выключить" : "Включить"; } }
+            public override void DoDefaultAction() { toggle.Toggle(); }
+        }
     }
 
     sealed class SetupProgress : Control

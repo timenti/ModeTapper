@@ -12,7 +12,7 @@ using System.Windows.Forms;
 [assembly:System.Reflection.AssemblyTitle("ModeTapper")]
 [assembly:System.Reflection.AssemblyProduct("ModeTapper")]
 [assembly:System.Reflection.AssemblyDescription("Экран, питание и выборочные маршруты VPN")]
-[assembly:System.Reflection.AssemblyVersion("1.24.17.0")]
+[assembly:System.Reflection.AssemblyVersion("1.24.18.0")]
 
 internal static class PowerModes {
     internal static readonly Guid Best=new Guid("ded574b5-45a0-4f42-8737-46345c09c238");
