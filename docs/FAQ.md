@@ -34,7 +34,7 @@ ModeTapper помогает переключаться между окнами, 
 
 ### Как установить
 
-1. Скачайте [ModeTapper.exe](https://github.com/timenti/ModeTapper/releases/download/v1.24.18/ModeTapper.exe).
+1. Скачайте [ModeTapper.exe](https://github.com/timenti/ModeTapper/releases/latest/download/ModeTapper.exe).
 2. При первом запуске установщика выберите пустую папку на локальном диске, доступную для записи. Папка по умолчанию — `%LOCALAPPDATA%\ModeTapper`.
 3. По желанию включите **«Управление камерами»** или **«Маршрутизация VPN»**. Камеры можно переключать из панели с разрешения Windows. Для маршрутизации нужен запущенный Happ. Компоненты можно добавить позже тем же установщиком.
 4. Нажмите **«Установить»** и дождитесь сообщения об окончании. Установка выполняется для текущего пользователя.
@@ -44,7 +44,7 @@ ModeTapper помогает переключаться между окнами, 
 
 ### Почему Windows предупреждает при запуске?
 
-SmartScreen проверяет репутацию скачанного файла. Установщик ModeTapper пока не подписан доверенным сертификатом издателя. Сверьте скачанный файл с контрольной суммой релиза. Если хеш отличается, скачайте файл заново со страницы проекта. [Контрольная сумма 1.24.18](https://github.com/timenti/ModeTapper/releases/download/v1.24.18/SHA256SUMS.txt) · [Справка Microsoft о SmartScreen](https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation)
+SmartScreen проверяет репутацию скачанного файла. Откройте свойства EXE и проверьте вкладку «Цифровые подписи». Для старых выпусков вкладка может отсутствовать. Сверьте SHA-256 скачанного файла с контрольной суммой именно этой версии. Если хеш отличается, скачайте файл заново со страницы проекта. [Все релизы](https://github.com/timenti/ModeTapper/releases) · [Справка Microsoft о SmartScreen](https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation)
 
 В PowerShell из папки со скачанным файлом выполните команду.
 
