@@ -4,84 +4,180 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ModeTapper для ASUS ROG Flow Z13 (2025) — скачать для Windows 11</title>
-  <meta name="description" content="ModeTapper для ASUS ROG Flow Z13 (2025, GZ302EA). Карусель окон, жесты для экрана и тачпада, быстрые режимы питания и охлаждения в Windows 11.">
-  <meta name="theme-color" content="#151715">
+  <meta name="description" content="ModeTapper для ASUS ROG Flow Z13 (2025, GZ302EA). Карусель окон, жесты тачпада и экрана, управление питанием и охлаждением в Windows 11.">
+  <meta name="theme-color" content="#111111">
   <link rel="canonical" href="https://timenti.github.io/ModeTapper/">
   <link rel="icon" href="ModeTapper.ico">
   <link rel="stylesheet" href="style.css">
+  <script src="site.js" defer></script>
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="ModeTapper">
   <meta property="og:title" content="ModeTapper для ASUS ROG Flow Z13">
-  <meta property="og:description" content="Карусель окон, жесты, управление экраном и охлаждением для ROG Flow Z13 и совместимых устройств с Windows 11.">
+  <meta property="og:description" content="Открывайте карусель боковой кнопкой. Управляйте окнами свайпами, а экраном, питанием и охлаждением из одной панели.">
   <meta property="og:url" content="https://timenti.github.io/ModeTapper/">
-  <meta property="og:image" content="https://timenti.github.io/ModeTapper/panel.webp">
+  <meta property="og:image" content="https://timenti.github.io/ModeTapper/media/carousel-motion.webp">
 </head>
 <body>
-  <header class="wrap masthead">
-    <a class="brand" href="./"><img src="ModeTapper.ico" alt="" width="32" height="32">ModeTapper</a>
-    <nav aria-label="Разделы сайта">
-      <a class="nav-functions" href="#features">Возможности</a>
-      <a href="https://github.com/timenti/ModeTapper">GitHub</a>
-    </nav>
+  <a class="skip" href="#main">К содержанию</a>
+  <header class="masthead">
+    <div class="wrap masthead-inner">
+      <a class="brand" href="./"><img src="ModeTapper.ico" alt="" width="29" height="29"> ModeTapper</a>
+      <nav aria-label="Разделы сайта">
+        <a href="#demos">Демонстрации</a>
+        <a href="#gestures">Жесты</a>
+        <a href="#install">Установка</a>
+      </nav>
+      <a class="source" href="https://github.com/timenti/ModeTapper">GitHub</a>
+    </div>
   </header>
-  <main>
-    <section class="wrap hero" aria-labelledby="page-title">
-      <div>
-        <p class="eyebrow">ROG Flow Z13 (2025) <span>·</span> GZ302EA</p>
-        <h1 id="page-title">ModeTapper <span>для ASUS ROG Flow Z13</span></h1>
-        <p class="intro">Открывайте карусель боковой кнопкой, переключайте окна свайпами и меняйте охлаждение в боковой панели. С клавиатурой и в режиме планшета.</p>
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="page-title">
+      <div class="hero-copy">
+        <p class="label">ASUS ROG Flow Z13 (2025) <span>·</span> GZ302EA</p>
+        <h1 id="page-title">ModeTapper</h1>
+        <p class="hero-title">Окна под пальцами.<br>Настройки под рукой.</p>
+        <p class="hero-description">Открывайте карусель боковой кнопкой, меняйте яркость свайпом и переключайте охлаждение прямо в боковой панели.</p>
         <div class="actions">
-          <a class="button download" href="https://github.com/timenti/ModeTapper/releases/latest/download/ModeTapper.exe">Скачать ModeTapper</a>
-          <a class="button secondary" href="https://github.com/timenti/ModeTapper">Репозиторий</a>
+          <a class="button primary" href="https://github.com/timenti/ModeTapper/releases/latest/download/ModeTapper.exe">Скачать ModeTapper</a>
+          <a class="button secondary" href="#demos">Посмотреть в работе</a>
         </div>
-        <p class="requirements">Windows 11 x64 <span>·</span> <a href="https://github.com/timenti/ModeTapper/releases/latest">Последний релиз и SHA‑256</a></p>
+        <p class="support">Windows 11 x64 <span>·</span> <a href="https://github.com/timenti/ModeTapper/releases/latest">Последний релиз и SHA‑256</a></p>
       </div>
-      <figure class="hero-figure">
-        <div class="preview">
-          <img src="panel.webp" width="712" height="708" alt="Боковая панель ModeTapper с режимами экрана, производительности и охлаждения">
-        </div>
-        <figcaption>Режимы экрана, питания и охлаждения в ModeTapper</figcaption>
+      <figure class="hero-demo">
+        <video id="panel-demo" width="1120" height="1166" muted playsinline loop controls preload="none" poster="media/panel-motion.webp" aria-label="Запись открытия и закрытия боковой панели">
+          <source src="media/panel-motion.mp4" type="video/mp4">
+        </video>
+        <figcaption>
+          <span>Боковая панель ModeTapper</span>
+          <button class="motion-button" type="button" aria-controls="panel-demo" hidden>Воспроизвести</button>
+        </figcaption>
       </figure>
     </section>
 
-    <section class="wrap details" id="features" aria-labelledby="features-title">
-      <div class="section-heading">
-        <p class="eyebrow">Возможности</p>
-        <h2 id="features-title">Управляйте устройством, не выходя из задачи</h2>
+    <section class="section wrap" id="demos" aria-labelledby="demos-title">
+      <div class="section-head">
+        <h2 id="demos-title">ModeTapper в работе</h2>
+        <p>Карусель открывается поверх приложений, лупа увеличивает участок экрана, а «Анимации+» добавляют переходы между ярлыком и окном.</p>
       </div>
-      <div class="feature-grid">
-        <article>
-          <h3>Окна и жесты</h3>
-          <p>Листайте окна в карусели и закрывайте их свайпом вверх. При отсоединённой клавиатуре жесты с краёв экрана дают доступ к карусели, громкости и яркости.</p>
+      <div class="switcher" data-switcher>
+        <div class="tablist" aria-label="Записи интерфейса" role="tablist" hidden>
+          <button type="button" role="tab" id="tab-carousel" aria-controls="demo-carousel" aria-selected="true">Карусель окон</button>
+          <button type="button" role="tab" id="tab-lens" aria-controls="demo-lens" aria-selected="false" tabindex="-1">Лупа</button>
+          <button type="button" role="tab" id="tab-windows" aria-controls="demo-windows" aria-selected="false" tabindex="-1">Анимации окон</button>
+        </div>
+        <div class="demo-pane" id="demo-carousel">
+          <video width="1440" height="862" controls muted playsinline preload="none" poster="media/carousel-motion.webp" aria-label="Карусель открывается из Калькулятора, листает окна и закрывает Ножницы">
+            <source src="media/carousel-motion.mp4" type="video/mp4">
+          </video>
+          <div class="demo-copy"><h3>Карусель окон</h3><p>Пролистайте карточки, смахните ненужное окно вверх и нажмите на нужную карточку, чтобы вернуться к приложению.</p></div>
+        </div>
+        <div class="demo-pane" id="demo-lens">
+          <video width="1280" height="708" controls muted playsinline preload="none" poster="media/lens-motion.webp" aria-label="Лупа увеличивает текст в окне на рабочем столе">
+            <source src="media/lens-motion.mp4" type="video/mp4">
+          </video>
+          <div class="demo-copy"><h3>Лупа</h3><p>Увеличьте мелкий текст или участок интерфейса. Для фотографий есть отдельные жесты масштабирования.</p></div>
+        </div>
+        <div class="demo-pane" id="demo-windows">
+          <video width="1440" height="862" controls muted playsinline preload="none" poster="media/window-motion.webp" aria-label="Окно Часы раскрывается от ярлыка и плавно закрывается">
+            <source src="media/window-motion.mp4" type="video/mp4">
+          </video>
+          <div class="demo-copy"><h3>Анимации окон</h3><p>Поддерживаемое окно раскрывается из ярлыка, если ModeTapper определил его положение. Переходы также работают при сворачивании и закрытии.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section wrap" id="gestures" aria-labelledby="gestures-title">
+      <div class="section-head">
+        <h2 id="gestures-title">С клавиатурой и без неё</h2>
+        <p>Выберите тачпад или сенсорный экран, чтобы узнать, с какого края начать жест.</p>
+      </div>
+      <div class="switcher" data-switcher>
+        <div class="tablist" aria-label="Способ управления" role="tablist" hidden>
+          <button type="button" role="tab" id="tab-touchpad" aria-controls="gesture-touchpad" aria-selected="true">Тачпад</button>
+          <button type="button" role="tab" id="tab-touchscreen" aria-controls="gesture-touchscreen" aria-selected="false" tabindex="-1">Сенсорный экран</button>
+        </div>
+        <div class="gesture-pane" id="gesture-touchpad">
+          <img src="media/gestures.png" width="550" height="146" alt="Плитки настроек тачпада и краевых жестов в ModeTapper" loading="lazy">
+          <div>
+            <h3>Тачпад с клавиатурой</h3>
+            <dl class="steps">
+              <div><dt>Нижний край, два пальца вверх</dt><dd>Открыть карусель</dd></div>
+              <div><dt>Нижний край, два пальца вбок</dt><dd>Перейти к соседнему окну</dd></div>
+              <div><dt>Верхний край, один палец вбок</dt><dd>Изменить громкость</dd></div>
+              <div><dt>Боковой край, один палец вверх или вниз</dt><dd>Подсветка клавиатуры слева, яркость экрана справа</dd></div>
+            </dl>
+          </div>
+        </div>
+        <div class="gesture-pane" id="gesture-touchscreen">
+          <div class="edge-map" aria-hidden="true">
+            <span class="edge-left">Яркость</span><span class="edge-right">Громкость</span><span class="edge-bottom">Окна</span>
+          </div>
+          <div>
+            <h3>Сенсорный экран без клавиатуры</h3>
+            <dl class="steps">
+              <div><dt>Нижняя полоска, два пальца вверх</dt><dd>Открыть карусель</dd></div>
+              <div><dt>Нижняя полоска, один палец вбок</dt><dd>Перейти к соседнему окну</dd></div>
+              <div><dt>Левый край, один палец вверх или вниз</dt><dd>Изменить яркость</dd></div>
+              <div><dt>Правый край, один палец вверх или вниз</dt><dd>Изменить громкость</dd></div>
+            </dl>
+          </div>
+        </div>
+      </div>
+      <p class="section-note"><a href="https://github.com/timenti/ModeTapper/blob/main/docs/FAQ.md#какие-жесты-есть">Полная карта жестов и требования к устройству</a></p>
+    </section>
+
+    <section class="section wrap" id="controls" aria-labelledby="controls-title">
+      <div class="section-head"><h2 id="controls-title">Экран, питание и охлаждение</h2><p>Профиль питания Windows и режим вентиляторов ASUS переключаются независимо.</p></div>
+      <div class="control-rows">
+        <article><img src="media/panel-screen.png" width="672" height="266" alt="Три режима экрана и блокировка поворота" loading="lazy">
+          <div><h3>Режим экрана</h3><p>«Всегда включён» удерживает дисплей активным. «Во время задач» держит его включённым, пока выполняется задача Codex. «Выключено» возвращает таймеры Windows.</p></div>
         </article>
-        <article>
-          <h3>Экран и производительность</h3>
-          <p>Оставляйте экран включённым постоянно или на время активных задач Codex. Переключайтесь между экономией, балансом и максимальной производительностью.</p>
+        <article><img src="media/panel-performance.png" width="672" height="176" alt="Экономия, баланс и максимальная производительность" loading="lazy">
+          <div><h3>Производительность</h3><p>Экономия полезна на батарее. Баланс даёт больше производительности от сети. Максимум можно использовать для тяжёлых задач и от сети, и от батареи.</p></div>
         </article>
-        <article>
-          <h3>Профили охлаждения ASUS</h3>
-          <p>Выбирайте тихий, производительный режим или турбо в боковой панели. Доступность зависит от модели, питания и положения устройства.</p>
-        </article>
-        <article>
-          <h3>Виджеты и дополнительные компоненты</h3>
-          <p>Выведите часы, календарь, лимит и задачи Codex на рабочий стол. Управление камерами и маршрутизацию через Happ можно добавить при установке или позже.</p>
+        <article><img src="media/panel-cooling.png" width="672" height="190" alt="Тихий, производительный и турбо-профили охлаждения ASUS" loading="lazy">
+          <div><h3>Охлаждение ASUS</h3><p>Тихий режим для чтения, производительный для длительной нагрузки, турбо при подключённом питании, если он доступен на устройстве.</p></div>
         </article>
       </div>
     </section>
 
-    <section class="wrap compatibility" id="compatibility" aria-labelledby="compatibility-title">
-      <div class="compatibility-inner">
-        <div>
-          <h2 id="compatibility-title">Совместимость</h2>
-          <p>Боковая кнопка и охлаждение проверены на <strong>ASUS ROG Flow Z13 (2025, GZ302EA)</strong> с ASUS System Control Interface v3. На других совместимых ноутбуках и трансформерах с Windows 11 набор функций зависит от оборудования.</p>
-        </div>
-        <a class="button secondary" href="https://github.com/timenti/ModeTapper/blob/main/docs/FAQ.md">Руководство и FAQ</a>
+    <section class="section wrap" aria-labelledby="extras-title">
+      <div class="section-head"><h2 id="extras-title">Виджеты, камеры и маршрутизация</h2></div>
+      <div class="extra-grid">
+        <article><img src="media/desktop-widgets.png" width="860" height="423" alt="Часы, календарь и лимит Codex на рабочем столе" loading="lazy">
+          <h3>Виджеты рабочего стола</h3><p>Настройте часы, календарь, лимит и задачи Codex. Активный чат можно открыть прямо из виджета.</p></article>
+        <article><img src="media/panel-cameras.png" width="672" height="137" alt="Переключатель и кнопка открытия камеры в ModeTapper" loading="lazy">
+          <h3>Камеры</h3><p>Откройте камеру или отключите устройства из панели. Компонент можно добавить в установщике.</p></article>
+        <article><img src="media/vpn-sites.png" width="1140" height="672" alt="Колонки «Через Happ» и «Напрямую» в списке сайтов" loading="lazy">
+          <h3>Сайты через Happ</h3><p>Укажите, какие домены открывать через локальный прокси Happ, а какие направлять напрямую.</p></article>
       </div>
+    </section>
+
+    <section class="section wrap install" id="install" aria-labelledby="install-title">
+      <div>
+        <h2 id="install-title">Установите ModeTapper</h2>
+        <ol>
+          <li>Скачайте <strong>ModeTapper.exe</strong> и выберите папку установки.</li>
+          <li>При необходимости включите компоненты камер и VPN. Их можно добавить позже этим же установщиком.</li>
+          <li>Откройте ModeTapper из меню «Пуск» и включите нужные плитки.</li>
+        </ol>
+        <div class="actions">
+          <a class="button primary" href="https://github.com/timenti/ModeTapper/releases/latest/download/ModeTapper.exe">Скачать для Windows</a>
+          <a class="button secondary" href="https://github.com/timenti/ModeTapper/releases/latest">Релиз и контрольная сумма</a>
+        </div>
+      </div>
+      <img src="media/installer.png" width="1077" height="876" alt="Установщик ModeTapper с выбором папки и компонентов" loading="lazy">
+    </section>
+
+    <section class="section wrap compatibility" aria-labelledby="compatibility-title">
+      <h2 id="compatibility-title">Совместимость</h2>
+      <div><p>Боковая кнопка и охлаждение проверены на <strong>ASUS ROG Flow Z13 (2025, GZ302EA)</strong> с ASUS System Control Interface v3. На других устройствах с Windows 11 набор функций зависит от оборудования. Для жестов тачпада нужен совместимый Precision Touchpad, а для краевых жестов экрана нужна поддержка планшетного положения Windows.</p>
+      <a href="https://github.com/timenti/ModeTapper/blob/main/docs/FAQ.md">Руководство и ответы на вопросы</a></div>
     </section>
   </main>
   <footer class="wrap footer">
-    <a href="https://github.com/timenti/ModeTapper">ModeTapper от timenti</a>
-    <a href="https://github.com/timenti/ModeTapper/releases">Все версии</a>
+    <a class="brand" href="./"><img src="ModeTapper.ico" alt="" width="25" height="25"> ModeTapper</a>
+    <nav aria-label="Ссылки проекта"><a href="https://github.com/timenti/ModeTapper">Репозиторий</a><a href="https://github.com/timenti/ModeTapper/releases">Все версии</a></nav>
   </footer>
 </body>
 </html>
