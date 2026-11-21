@@ -4,15 +4,17 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security;
+using System.Windows.Forms;
 using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 
 internal enum AsusCoolingPreset { Performance=0, Turbo=1, Silent=2 }
-internal enum AsusCoolingAvailability { DriverUnavailable, LockedByAsus, Ready }
+internal enum AsusCoolingAvailability { DriverUnavailable, LockedByAsus, Ready, ReadyWithPostureMismatch }
 
 internal static class AsusCooling {
     const uint ReadStatus=0x53545344, SetStatus=0x53564544;
     const uint ThermalPolicy=0x00120075, DriverControl=0x0022240C;
+    const int ConvertibleSlateMode=0x2003;
     const string ArmouryCrate=@"shell:AppsFolder\B9ECED6F.ArmouryCrate_qmba6cd70vzyy!App";
     const string ArmouryProfile=@"HKEY_LOCAL_MACHINE\SOFTWARE\ASUS\Armoury Crate Service\ThrottlePlugin\External";
 
@@ -20,6 +22,8 @@ internal static class AsusCooling {
     static extern SafeFileHandle CreateFile(string name,uint access,uint share,IntPtr security,uint disposition,uint flags,IntPtr template);
     [DllImport("kernel32.dll",SetLastError=true)]
     static extern bool DeviceIoControl(SafeFileHandle handle,uint control,uint[] input,uint inputSize,[Out]uint[] output,uint outputSize,out uint returned,IntPtr overlapped);
+    [DllImport("user32.dll")]
+    static extern int GetSystemMetrics(int metric);
 
     internal static bool IsSupportedModel(){
         string product=Convert.ToString(Registry.GetValue(@"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\BIOS","SystemProductName",""));
@@ -56,11 +60,28 @@ internal static class AsusCooling {
         throw new InvalidOperationException("Не удалось прочитать состояние профилей ASUS.");
     }
 
+    internal static bool CanSelect(AsusCoolingAvailability availability){
+        return availability==AsusCoolingAvailability.Ready||availability==AsusCoolingAvailability.ReadyWithPostureMismatch;
+    }
+
+    static AsusCoolingAvailability ResolveAvailability(){
+        if(!IsLocked())return AsusCoolingAvailability.Ready;
+        if(GetSystemMetrics(ConvertibleSlateMode)==0)return AsusCoolingAvailability.LockedByAsus;
+        var screen=Screen.PrimaryScreen;
+        if(screen==null||screen.Bounds.Width<=screen.Bounds.Height)return AsusCoolingAvailability.LockedByAsus;
+        int rotation=DisplayOrientation.Read(screen.DeviceName);
+        // A landscape desktop and matching hardware sensor distinguish a stale Armoury Crate flag.
+        if((rotation==0||rotation==2)&&RotationLock.ReadSensor()==rotation)
+            return AsusCoolingAvailability.ReadyWithPostureMismatch;
+        return AsusCoolingAvailability.LockedByAsus;
+    }
+
     internal static AsusCoolingAvailability Availability(){
         try{
-            if(IsLocked())return AsusCoolingAvailability.LockedByAsus;
+            var availability=ResolveAvailability();
+            if(!CanSelect(availability))return availability;
             using(var handle=Open()){
-                return HasThermalPolicy(handle)?AsusCoolingAvailability.Ready:AsusCoolingAvailability.DriverUnavailable;
+                return HasThermalPolicy(handle)?availability:AsusCoolingAvailability.DriverUnavailable;
             }
         }catch(Win32Exception){return AsusCoolingAvailability.DriverUnavailable;}
         catch(InvalidOperationException){return AsusCoolingAvailability.DriverUnavailable;}
@@ -76,9 +97,11 @@ internal static class AsusCooling {
         if(preset==AsusCoolingPreset.Turbo&&!PowerModes.OnAC)
             throw new InvalidOperationException("Турбо доступен при подключении к сети.");
         using(var handle=Open()){
-            if(IsLocked())throw new InvalidOperationException("ASUS ограничила смену профиля. Проверьте Armoury Crate.");
+            var availability=ResolveAvailability();
+            if(!CanSelect(availability))throw new InvalidOperationException("ASUS ограничила смену профиля. Проверьте Armoury Crate.");
             if(!HasThermalPolicy(handle))throw new InvalidOperationException("Драйвер ASUS не поддерживает переключение профиля.");
-            Safety.Audit("asus.cooling",null,preset.ToString(),"intent");
+            Safety.Audit("asus.cooling",null,preset.ToString(),availability==AsusCoolingAvailability.ReadyWithPostureMismatch?
+                "intent with confirmed desktop posture":"intent");
             if(Call(handle,SetStatus,(uint)preset)!=1){
                 Safety.Audit("asus.cooling",null,preset.ToString(),"driver rejected preset");
                 throw new InvalidOperationException("Драйвер ASUS отклонил профиль.");

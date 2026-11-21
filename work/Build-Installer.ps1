@@ -40,7 +40,9 @@ try {
     $test = Start-Process -FilePath $target -ArgumentList '--verify-package' -WindowStyle Hidden -PassThru -Wait
     if ($test.ExitCode -ne 0) { throw 'Проверка содержимого установщика завершилась ошибкой' }
     Sign-ReleaseFile $target
-    Get-FileHash -LiteralPath $target
+    $checksum = Get-FileHash -LiteralPath $target -Algorithm SHA256
+    Set-Content -LiteralPath (Join-Path $folder 'SHA256SUMS.txt') -Value ($checksum.Hash.ToLowerInvariant() + '  ModeTapper.exe') -Encoding ascii
+    $checksum
 } finally {
     if (Test-Path -LiteralPath $payload) { Remove-Item -LiteralPath $payload }
 }

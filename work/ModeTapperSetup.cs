@@ -13,7 +13,7 @@ using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Установка ModeTapper")]
 [assembly: AssemblyProduct("ModeTapper")]
-[assembly: AssemblyVersion("1.24.16.0")]
+[assembly: AssemblyVersion("1.24.17.0")]
 
 internal static class ModeTapperSetup
 {
@@ -23,7 +23,7 @@ internal static class ModeTapperSetup
         if (args.Length == 1 && args[0] == "--verify-package")
             return InstallFiles.Verify() ? 0 : 1;
         if (args.Length == 1 && args[0] == "--quiet")
-            return InstallFiles.Run(InstallFiles.Existing ?? InstallFiles.DefaultPath, true, (step, text) => {}) == null ? 0 : 1;
+            return InstallFiles.Run(InstallFiles.Existing ?? InstallFiles.DefaultPath, true, true, false, (step, text) => {}) == null ? 0 : 1;
 
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
@@ -38,153 +38,251 @@ internal static class ModeTapperSetup
 internal sealed class SetupWindow : Form
 {
     static readonly Color Background = Color.FromArgb(22, 22, 22);
-    static readonly Color Surface = Color.FromArgb(30, 30, 30);
-    static readonly Color Border = Color.FromArgb(56, 56, 56);
-    static readonly Color TextColor = Color.FromArgb(247, 247, 247);
-    static readonly Color Muted = Color.FromArgb(185, 185, 185);
+    static readonly Color Surface = Color.FromArgb(31, 31, 31);
+    static readonly Color Border = Color.FromArgb(58, 58, 58);
+    static readonly Color Ink = Color.FromArgb(246, 246, 246);
+    static readonly Color Muted = Color.FromArgb(179, 179, 179);
     static readonly Color Green = Color.FromArgb(110, 211, 157);
     static readonly Color Red = Color.FromArgb(235, 125, 125);
 
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
+    [DllImport("user32.dll")] static extern uint GetDpiForSystem();
     readonly string existing = InstallFiles.Existing;
+    readonly Version installedVersion;
+    readonly bool fresh, update, newer, needsRepair;
     readonly TextBox path;
-    readonly CheckBox cameras;
+    readonly SetupToggle cameras, vpn;
     readonly Label status;
-    readonly Button browse, cancel, primary;
+    readonly Button browse, cancel, primary, repair;
     readonly SetupProgress progress;
-    readonly Font headingFont = new Font("Segoe UI", 24, FontStyle.Bold);
-    readonly Font bodyFont = new Font("Segoe UI", 10);
-    readonly Font detailFont = new Font("Segoe UI", 9);
+    readonly Font headingFont, bodyFont, detailFont, titleFont;
+    readonly float scale;
     bool busy, complete;
     internal int Result { get; private set; }
 
     internal SetupWindow()
     {
-        Text = "Установка ModeTapper";
+        fresh = existing == null;
+        installedVersion = InstallFiles.InstalledVersion(existing);
+        needsRepair = !fresh && installedVersion == null;
+        update = installedVersion != null && installedVersion < InstallFiles.PackageVersion;
+        newer = installedVersion != null && installedVersion > InstallFiles.PackageVersion;
+
+        Text = "Установщик ModeTapper";
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
-        AutoScaleDimensions = new SizeF(96, 96);
-        AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(624, 450);
+        var working = Screen.PrimaryScreen.WorkingArea;
+        scale = Math.Min(GetDpiForSystem() / 96f, Math.Min((working.Width - 24) / 620f, (working.Height - 70) / 585f));
+        AutoScaleMode = AutoScaleMode.None;
+        headingFont = new Font("Segoe UI", D(35), FontStyle.Bold, GraphicsUnit.Pixel);
+        bodyFont = new Font("Segoe UI", D(14), FontStyle.Regular, GraphicsUnit.Pixel);
+        detailFont = new Font("Segoe UI", D(13), FontStyle.Regular, GraphicsUnit.Pixel);
+        titleFont = new Font("Segoe UI Semibold", D(15), FontStyle.Regular, GraphicsUnit.Pixel);
         Font = bodyFont;
+        ClientSize = new Size(D(620), D(490));
         BackColor = Background;
-        ForeColor = TextColor;
+        ForeColor = Ink;
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 8, Padding = new Padding(30, 24, 30, 22) };
-        foreach (int height in new[] { 58, 46, 26, 45, 57, 62, 28 })
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = Inset(28, 22, 28, 20), Margin = Padding.Empty };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         Controls.Add(layout);
 
-        var header = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty };
-        header.Controls.Add(new PictureBox { Image = Icon.ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(40, 40), Margin = new Padding(0, 5, 13, 0), TabStop = false });
-        header.Controls.Add(new Label { Text = "ModeTapper", Font = headingFont, ForeColor = TextColor, AutoSize = true, Margin = Padding.Empty });
-        layout.Controls.Add(header, 0, 0);
-        layout.Controls.Add(Label(existing == null ? "Установка для текущего пользователя Windows" : "Обновление с сохранением настроек", Muted), 0, 1);
-        layout.Controls.Add(Label("Папка установки", TextColor), 0, 2);
+        var hero = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Surface, ColumnCount = 2, RowCount = 2,
+            Padding = Inset(16, 8, 14, 7), Margin = Inset(0, 0, 0, 12) };
+        hero.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(61)));
+        hero.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        hero.RowStyles.Add(new RowStyle(SizeType.Percent, 66));
+        hero.RowStyles.Add(new RowStyle(SizeType.Percent, 34));
+        Bitmap logoImage;
+        using (var sizedIcon = new Icon(Icon, new Size(D(42), D(42)))) logoImage = sizedIcon.ToBitmap();
+        var logo = new PictureBox { Image = logoImage, SizeMode = PictureBoxSizeMode.CenterImage, Dock = DockStyle.Fill, Margin = Inset(0, 0, 12, 0) };
+        logo.Disposed += (sender, args) => logoImage.Dispose();
+        hero.Controls.Add(logo, 0, 0);
+        hero.SetRowSpan(logo, 2);
+        hero.Controls.Add(MakeLabel("ModeTapper", Ink, headingFont), 1, 0);
+        hero.Controls.Add(MakeLabel("Версия " + InstallFiles.PackageVersion.ToString(3) + "  ·  Windows 11 x64", Muted, detailFont), 1, 1);
+        AddRow(layout, hero, 107);
 
-        var pathRow = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Fill, Margin = Padding.Empty };
-        pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 114));
-        path = new TextBox { Text = existing ?? InstallFiles.DefaultPath, BackColor = Surface, ForeColor = TextColor, Dock = DockStyle.Top,
-            BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(0, 5, 12, 0), ReadOnly = existing != null, AccessibleName = "Папка установки" };
-        browse = Button("Обзор…", false);
-        browse.Dock = DockStyle.Top;
-        browse.Enabled = existing == null;
+        string summary = fresh ? "Выберите папку и компоненты для первой установки." :
+            newer ? "Установлена версия " + installedVersion.ToString(3) + ". Для её обслуживания нужен более новый установщик." :
+            update ? "Версия " + installedVersion.ToString(3) + " будет обновлена. Ваши настройки сохранятся." :
+            needsRepair ? "Найдена установка ModeTapper. Можно восстановить файлы и ярлыки." :
+            "ModeTapper уже установлен. Отсюда можно добавить компоненты или восстановить файлы.";
+        AddRow(layout, MakeLabel(summary, Ink, bodyFont), 43);
+
+        path = new TextBox { Text = existing ?? InstallFiles.DefaultPath, BackColor = Surface, ForeColor = Ink,
+            Dock = DockStyle.Top, BorderStyle = BorderStyle.FixedSingle, Margin = Inset(0, 5, 10, 0),
+            ReadOnly = !fresh, AccessibleName = "Папка установки" };
+        browse = MakeButton("Выбрать…", false);
+        browse.Dock = DockStyle.Fill;
         browse.Click += Browse;
-        pathRow.Controls.Add(path, 0, 0);
-        pathRow.Controls.Add(browse, 1, 0);
-        layout.Controls.Add(pathRow, 0, 3);
+        if (fresh)
+        {
+            AddRow(layout, MakeLabel("Папка установки", Muted, detailFont), 21);
+            var pathRow = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Fill, Margin = Inset(0, 0, 0, 7) };
+            pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(101)));
+            pathRow.Controls.Add(path, 0, 0);
+            pathRow.Controls.Add(browse, 1, 0);
+            AddRow(layout, pathRow, 42);
+        }
 
-        var options = new Panel { Dock = DockStyle.Fill, BackColor = Surface, Margin = Padding.Empty, Padding = new Padding(10, 3, 10, 3) };
-        cameras = new CheckBox { Text = "Управление камерами", Checked = true, Dock = DockStyle.Top, Height = 27, ForeColor = TextColor };
-        var cameraNote = Label("Windows запросит разрешение при переключении камер.", Muted);
-        cameraNote.Font = detailFont;
-        options.Controls.Add(cameraNote);
-        options.Controls.Add(cameras);
-        layout.Controls.Add(options, 0, 4);
+        cameras = new SetupToggle("Управление камерами");
+        vpn = new SetupToggle("Маршрутизация VPN");
+        if (!newer)
+        {
+            bool addCameras = fresh || !InstallFiles.HasCameras(existing);
+            bool addVpn = fresh || !InstallFiles.HasVpn(existing);
+            if (addCameras || addVpn)
+                AddRow(layout, MakeLabel("Дополнительные компоненты", Muted, detailFont), 26);
+            if (addCameras) AddRow(layout, Option("Управление камерами", "Включение и отключение камер из боковой панели.", cameras), 67);
+            if (addVpn) AddRow(layout, Option("Маршрутизация VPN", "Правила для сайтов через локальный прокси Happ.", vpn), 67);
+        }
 
-        status = Label("Готово к установке", Muted);
-        status.Margin = new Padding(0, 12, 0, 0);
-        layout.Controls.Add(status, 0, 5);
-        progress = new SetupProgress { Dock = DockStyle.Top, Height = 7, Margin = Padding.Empty, AccessibleName = "Ход установки" };
-        layout.Controls.Add(progress, 0, 6);
+        status = MakeLabel(newer ? "" : fresh ? "Компоненты можно добавить позже тем же установщиком." :
+            update ? "Установленные компоненты сохранятся." : "", Muted, detailFont);
+        AddRow(layout, status, 42);
+        progress = new SetupProgress { Dock = DockStyle.Top, Height = D(5), Margin = Inset(0, 3, 0, 0), AccessibleName = "Ход установки" };
+        AddRow(layout, progress, 15);
 
-        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Margin = Padding.Empty };
-        primary = Button(existing == null ? "Установить" : "Обновить", true);
-        primary.Width = 158;
-        primary.Click += Install;
-        cancel = Button("Отмена", false);
-        cancel.Width = 110;
-        cancel.Margin = new Padding(0, 0, 10, 0);
-        cancel.Click += (sender, e) => Close();
-        actions.Controls.Add(primary);
-        actions.Controls.Add(cancel);
-        layout.Controls.Add(actions, 0, 7);
-        AcceptButton = primary;
+        var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, Margin = Padding.Empty };
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(145)));
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(100)));
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(187)));
+        repair = MakeButton("Восстановить", false);
+        repair.Dock = DockStyle.Fill;
+        repair.Click += (sender, args) => Install(true);
+        repair.Visible = !fresh && !update && !newer;
+        primary = MakeButton("", true);
+        primary.Dock = DockStyle.Fill;
+        primary.Margin = Inset(9, 0, 0, 0);
+        primary.Click += (sender, args) => Install(false);
+        cancel = MakeButton("Закрыть", false);
+        cancel.Dock = DockStyle.Fill;
+        cancel.Click += (sender, args) => Close();
+        actions.Controls.Add(repair, 0, 0);
+        actions.Controls.Add(cancel, 2, 0);
+        actions.Controls.Add(primary, 3, 0);
+        AddRow(layout, actions, 41);
+
+        int rowsHeight = 0;
+        foreach (RowStyle row in layout.RowStyles) rowsHeight += (int)row.Height;
+        ClientSize = new Size(D(620), rowsHeight + layout.Padding.Vertical);
+        cameras.CheckedChanged += (sender, args) => UpdateAction();
+        vpn.CheckedChanged += (sender, args) => UpdateAction();
+        UpdateAction();
         CancelButton = cancel;
+        ActiveControl = AcceptButton as Control;
+    }
+
+    int D(int value) { return (int)Math.Round(value * scale); }
+    Padding Inset(int left, int top, int right, int bottom) { return new Padding(D(left), D(top), D(right), D(bottom)); }
+
+    void AddRow(TableLayoutPanel layout, Control control, int height)
+    {
+        int row = layout.RowCount;
+        layout.RowCount = row + 1;
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, D(height)));
+        layout.Controls.Add(control, 0, row);
+    }
+
+    static Label MakeLabel(string text, Color color, Font font)
+    {
+        return new Label { Text = text, ForeColor = color, Font = font, Dock = DockStyle.Fill,
+            Margin = Padding.Empty, TextAlign = ContentAlignment.MiddleLeft, UseMnemonic = false };
+    }
+
+    Control Option(string title, string description, SetupToggle toggle)
+    {
+        var card = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Surface, ColumnCount = 2, RowCount = 2,
+            Padding = Inset(14, 6, 10, 6), Margin = Inset(0, 0, 0, 7) };
+        card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(62)));
+        card.RowStyles.Add(new RowStyle(SizeType.Percent, 53));
+        card.RowStyles.Add(new RowStyle(SizeType.Percent, 47));
+        var name = MakeLabel(title, Ink, titleFont);
+        var note = MakeLabel(description, Muted, detailFont);
+        card.Controls.Add(name, 0, 0);
+        card.Controls.Add(note, 0, 1);
+        card.Controls.Add(toggle, 1, 0);
+        card.SetRowSpan(toggle, 2);
+        name.Click += (s, e) => { if (toggle.Enabled) toggle.Checked = !toggle.Checked; };
+        note.Click += (s, e) => { if (toggle.Enabled) toggle.Checked = !toggle.Checked; };
+        return card;
+    }
+
+    static Button MakeButton(string text, bool accent)
+    {
+        var button = new Button { Text = text, Margin = Padding.Empty, FlatStyle = FlatStyle.Flat,
+            BackColor = accent ? Green : Surface, ForeColor = accent ? Background : Ink, UseVisualStyleBackColor = false };
+        button.FlatAppearance.BorderColor = accent ? Green : Border;
+        button.FlatAppearance.MouseOverBackColor = accent ? Color.FromArgb(145, 225, 183) : Color.FromArgb(43, 43, 43);
+        return button;
     }
 
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        int enabled = 1;
-        DwmSetWindowAttribute(Handle, 20, ref enabled, sizeof(int));
+        int dark = 1, round = 2;
+        DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int));
+        DwmSetWindowAttribute(Handle, 33, ref round, sizeof(int));
     }
 
-    Label Label(string text, Color color)
+    void UpdateAction()
     {
-        return new Label { Text = text, ForeColor = color, Dock = DockStyle.Fill, Margin = Padding.Empty, UseMnemonic = false };
-    }
-
-    Button Button(string text, bool accent)
-    {
-        var button = new Button { Text = text, Height = 37, Margin = Padding.Empty, FlatStyle = FlatStyle.Flat,
-            BackColor = accent ? Green : Surface, ForeColor = accent ? Background : TextColor, UseVisualStyleBackColor = false };
-        button.FlatAppearance.BorderColor = accent ? Green : Border;
-        button.FlatAppearance.MouseOverBackColor = accent ? Color.FromArgb(143, 225, 180) : Color.FromArgb(42, 42, 42);
-        return button;
+        bool adding = cameras.Checked || vpn.Checked;
+        bool showPrimary = !newer && (fresh || update || needsRepair || adding);
+        bool showRepair = !fresh && !update && !newer && !needsRepair;
+        primary.Visible = showPrimary;
+        primary.Text = fresh ? "Установить" : update ? "Обновить" : needsRepair ? "Восстановить" : "Установить компоненты";
+        repair.Visible = showRepair;
+        AcceptButton = showPrimary ? primary : showRepair ? repair : cancel;
     }
 
     void Browse(object sender, EventArgs e)
     {
-        using (var dialog = new FolderBrowserDialog { Description = "Выберите папку, в которой будет создана папка ModeTapper", ShowNewFolderButton = true })
+        using (var dialog = new FolderBrowserDialog { Description = "Выберите папку для ModeTapper", ShowNewFolderButton = true })
             if (dialog.ShowDialog(this) == DialogResult.OK)
                 path.Text = String.Equals(Path.GetFileName(dialog.SelectedPath), "ModeTapper", StringComparison.OrdinalIgnoreCase)
                     ? dialog.SelectedPath : Path.Combine(dialog.SelectedPath, "ModeTapper");
     }
 
-    async void Install(object sender, EventArgs e)
+    async void Install(bool restoring)
     {
         if (complete) { Close(); return; }
+        if (busy || newer) return;
         busy = true;
         path.ReadOnly = true;
-        primary.Enabled = cancel.Enabled = cameras.Enabled = browse.Enabled = false;
+        primary.Enabled = repair.Enabled = cancel.Enabled = cameras.Enabled = vpn.Enabled = browse.Enabled = false;
         status.ForeColor = Muted;
         progress.Reset();
         string destination = path.Text;
-        bool camera = cameras.Checked;
-        var updates = new Progress<KeyValuePair<int, string>>(update => {
-            status.Text = update.Value;
-            progress.Advance(update.Key);
+        bool addCameras = cameras.Checked, addVpn = vpn.Checked;
+        var updates = new Progress<KeyValuePair<int, string>>(change => {
+            status.Text = change.Value;
+            progress.Advance(change.Key);
         });
         var report = (IProgress<KeyValuePair<int, string>>)updates;
-        string error = await Task.Run(() => InstallFiles.Run(destination, camera,
-            (value, text) => report.Report(new KeyValuePair<int, string>(value, text))));
+        string error = await Task.Run(() => InstallFiles.Run(destination, addCameras, addVpn, restoring || needsRepair,
+            (value, message) => report.Report(new KeyValuePair<int, string>(value, message))));
         busy = false;
-        cancel.Enabled = primary.Enabled = true;
+        primary.Enabled = repair.Enabled = cancel.Enabled = true;
         if (error == null)
         {
             complete = true;
             Result = 0;
             status.ForeColor = Green;
-            status.Text = "ModeTapper установлен. Панель доступна из меню «Пуск».";
+            status.Text = restoring || needsRepair ? "Файлы и ярлыки восстановлены. Ваши настройки сохранены." :
+                fresh || update ? "ModeTapper готов. Откройте его из меню «Пуск»." : "Компоненты добавлены. Откройте боковую панель.";
             progress.Advance(100);
             primary.Text = "Готово";
-            cancel.Visible = false;
+            primary.Visible = true;
+            AcceptButton = primary;
+            repair.Visible = cancel.Visible = false;
         }
         else
         {
@@ -192,10 +290,9 @@ internal sealed class SetupWindow : Form
             status.ForeColor = Red;
             status.Text = error;
             progress.Reset();
-            cameras.Enabled = true;
-            path.ReadOnly = existing != null;
-            browse.Enabled = existing == null;
-            primary.Text = "Повторить";
+            cameras.Enabled = vpn.Enabled = true;
+            path.ReadOnly = !fresh;
+            browse.Enabled = fresh;
         }
     }
 
@@ -214,8 +311,51 @@ internal sealed class SetupWindow : Form
             headingFont.Dispose();
             bodyFont.Dispose();
             detailFont.Dispose();
+            titleFont.Dispose();
         }
         base.Dispose(disposing);
+    }
+
+    sealed class SetupToggle : CheckBox
+    {
+        internal SetupToggle(string name)
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+            AccessibleName = name;
+            AccessibleDescription = "Переключатель дополнительного компонента";
+            Dock = DockStyle.Fill;
+            Margin = Padding.Empty;
+            Cursor = Cursors.Hand;
+            BackColor = Surface;
+            DoubleBuffered = true;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.Clear(BackColor);
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            int height = Math.Min(Height - 8, Width / 2);
+            int width = height * 2;
+            if (height < 4) return;
+            var track = new Rectangle((Width - width) / 2, (Height - height) / 2, width, height);
+            using (var path = new System.Drawing.Drawing2D.GraphicsPath())
+            {
+                path.AddArc(track.X, track.Y, height, height, 90, 180);
+                path.AddArc(track.Right - height, track.Y, height, height, 270, 180);
+                path.CloseFigure();
+                using (var pigment = new SolidBrush(Checked && Enabled ? Green : Border))
+                    e.Graphics.FillPath(pigment, path);
+            }
+            int inset = Math.Max(3, height / 6);
+            int x = Checked ? track.Right - height + inset : track.Left + inset;
+            using (var pigment = new SolidBrush(Checked && Enabled ? Background : Muted))
+                e.Graphics.FillEllipse(pigment, x, track.Top + inset, height - 2 * inset, height - 2 * inset);
+            if (Focused) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(track, 2, 2), Ink, Surface);
+        }
+
+        protected override void OnCheckedChanged(EventArgs e) { base.OnCheckedChanged(e); Invalidate(); }
+        protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
+        protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
     }
 
     sealed class SetupProgress : Control
@@ -259,9 +399,12 @@ internal static class InstallFiles
     const string Marker = "modetapper-managed-install.txt";
     const string Program = "ModeTapper.exe";
     const string Camera = "ModeTapper-camera-control.exe";
+    const string VpnTemplate = @"vpn\rules.template.pac";
     static readonly string Legacy = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Luma");
     internal static readonly string DefaultPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ModeTapper");
-    static readonly string[] Required = { Program, Program + ".config", "ModeTapper.ico", Camera, "LICENSE.txt", "rules.default.pac" };
+    internal static readonly Version PackageVersion = Assembly.GetExecutingAssembly().GetName().Version;
+    static readonly string[] CoreFiles = { Program, Program + ".config", "ModeTapper.ico", "LICENSE.txt" };
+    static readonly string[] PackageFiles = { Program, Program + ".config", "ModeTapper.ico", Camera, "LICENSE.txt", "rules.default.pac" };
     static readonly string[] Preferences = { "mode.txt", "power-preset.txt", "cooling-preset.txt", "touchpad-enabled.txt", "home-indicator-enabled.txt",
         "screen-edges-enabled.txt", "keyboard-level.txt", "touchpad-zoom-enabled.txt", "animation-plus-enabled.txt", "codex-widget.json", "desktop-widgets.json" };
 
@@ -275,6 +418,18 @@ internal static class InstallFiles
         }
     }
 
+    internal static Version InstalledVersion(string location)
+    {
+        if (location == null) return null;
+        try { return AssemblyName.GetAssemblyName(Path.Combine(location, Program)).Version; }
+        catch (IOException) { return null; }
+        catch (BadImageFormatException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
+    internal static bool HasCameras(string location) { return location != null && File.Exists(Path.Combine(location, Camera)); }
+    internal static bool HasVpn(string location) { return location != null && File.Exists(Path.Combine(location, VpnTemplate)); }
+
     static ZipArchive OpenPackage()
     {
         Stream payload = Assembly.GetExecutingAssembly().GetManifestResourceStream("ModeTapper.Payload");
@@ -287,7 +442,7 @@ internal static class InstallFiles
         try
         {
             using (var archive = OpenPackage())
-                foreach (string name in Required)
+                foreach (string name in PackageFiles)
                     using (var file = Entry(archive, name).Open()) file.CopyTo(Stream.Null);
             return true;
         }
@@ -301,7 +456,7 @@ internal static class InstallFiles
         return entry;
     }
 
-    internal static string Run(string selected, bool cameras, Action<int, string> progress)
+    internal static string Run(string selected, bool cameras, bool vpn, bool repair, Action<int, string> progress)
     {
         using (var gate = new Mutex(false, @"Local\ModeTapperSetup"))
         {
@@ -309,15 +464,16 @@ internal static class InstallFiles
             try { acquired = gate.WaitOne(0); }
             catch (AbandonedMutexException) { acquired = true; }
             if (!acquired) return "Установщик ModeTapper уже запущен.";
-            try { return Install(selected, cameras, progress); }
+            try { return Install(selected, cameras, vpn, repair, progress); }
             finally { gate.ReleaseMutex(); }
         }
     }
 
-    static string Install(string selected, bool cameras, Action<int, string> progress)
+    static string Install(string selected, bool cameras, bool vpn, bool repair, Action<int, string> progress)
     {
         string directory = null, backup = null, previous = null;
         var changed = new List<string>();
+        var createdDirectories = new List<string>();
         bool restart = false, retainBackup = false;
         using (var guard = OpenAsusGuard())
         try
@@ -343,25 +499,32 @@ internal static class InstallFiles
                 File.Exists(Path.Combine(Legacy, "luma-managed-install.txt")) && File.Exists(Path.Combine(Legacy, "Luma.exe")) ? Path.Combine(Legacy, "Luma.exe") : null;
             using (var archive = OpenPackage())
             {
-                foreach (string name in Required) Entry(archive, name);
+                foreach (string name in PackageFiles) Entry(archive, name);
+                var version = InstalledVersion(existing);
+                if (version != null && version > PackageVersion)
+                    return "Установлена более новая версия ModeTapper.";
+                bool copyCore = repair || version == null || version < PackageVersion;
+                bool copyCamera = (cameras || HasCameras(existing)) && (copyCore || !HasCameras(existing));
+                bool copyVpn = (vpn || HasVpn(existing)) && (copyCore || !HasVpn(existing));
+                if (!copyCore && !copyCamera && !copyVpn) return null;
                 progress(25, "Подготавливаем обновление…");
                 if (previous != null) restart = StopPrevious(previous);
-                if (!File.Exists(marker)) File.WriteAllText(marker, "ModeTapper managed installation");
                 backup = Path.Combine(Path.GetTempPath(), "ModeTapper-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(backup);
+                CreateTextIfMissing(directory, Marker, "ModeTapper managed installation", changed);
                 progress(46, "Копируем программу и компоненты…");
-                foreach (string name in Required)
+                if (copyCore)
+                    foreach (string name in CoreFiles) Copy(Entry(archive, name), directory, name, backup, changed);
+                if (copyCamera) Copy(Entry(archive, Camera), directory, Camera, backup, changed);
+                InitializeProfile(directory, previous, copyVpn, changed, createdDirectories);
+                if (copyVpn)
                 {
-                    if (name == "rules.default.pac") continue;
-                    if (name == Camera && !cameras)
-                    {
-                        string installedCamera = Path.Combine(directory, Camera);
-                        if (File.Exists(installedCamera)) { File.Copy(installedCamera, Path.Combine(backup, Camera)); File.Delete(installedCamera); changed.Add(Camera); }
-                        continue;
-                    }
-                    Copy(Entry(archive, name), directory, name, backup, changed);
+                    string vpnFolder = ProfileFolder(directory, "vpn", createdDirectories);
+                    bool existingRules = File.Exists(Path.Combine(vpnFolder, "custom-rules.json"));
+                    Copy(Entry(archive, "rules.default.pac"), directory, VpnTemplate, backup, changed);
+                    CreateTextIfMissing(directory, @"vpn\custom-rules.json", "{\"direct\":[],\"proxy\":[]}", changed);
+                    if (!existingRules) CreateTextIfMissing(directory, @"vpn\disabled.flag", "", changed);
                 }
-                InitializeProfile(directory, archive, previous);
             }
             progress(74, "Добавляем ModeTapper в меню «Пуск»…");
             RegisterShortcuts(executable);
@@ -376,10 +539,19 @@ internal static class InstallFiles
             bool restored = true;
             for (int index = changed.Count - 1; index >= 0; index--)
             {
-                string name = changed[index], target = Path.Combine(directory, name), old = Path.Combine(backup, name);
+                string name = changed[index], target = Path.Combine(directory, name), old = BackupPath(backup, name);
                 try { if (File.Exists(old)) File.Copy(old, target, true); else File.Delete(target); }
                 catch (IOException) { restored = false; }
                 catch (UnauthorizedAccessException) { restored = false; }
+            }
+            foreach (string created in createdDirectories)
+            {
+                try
+                {
+                    if (Directory.Exists(created) && Directory.GetFileSystemEntries(created).Length == 0) Directory.Delete(created);
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
             }
             retainBackup = !restored;
             if (restored && restart && previous != null) try { Start(previous, "--background"); } catch { }
@@ -440,7 +612,7 @@ internal static class InstallFiles
     {
         string target = Path.Combine(directory, name);
         string staging = Path.Combine(directory, ".install-" + Guid.NewGuid().ToString("N"));
-        if (File.Exists(target)) File.Copy(target, Path.Combine(backup, name));
+        if (File.Exists(target)) File.Copy(target, BackupPath(backup, name));
         try
         {
             entry.ExtractToFile(staging);
@@ -450,32 +622,60 @@ internal static class InstallFiles
         finally { if (File.Exists(staging)) File.Delete(staging); }
     }
 
-    static void InitializeProfile(string location, ZipArchive archive, string previous)
+    static string BackupPath(string backup, string name) { return Path.Combine(backup, name.Replace('\\', '_')); }
+
+    static void CreateTextIfMissing(string directory, string name, string contents, List<string> changed)
+    {
+        string target = Path.Combine(directory, name);
+        if (File.Exists(target)) return;
+        changed.Add(name);
+        File.WriteAllText(target, contents);
+    }
+
+    static void InitializeProfile(string location, string previous, bool vpn, List<string> changed, List<string> createdDirectories)
     {
         if (previous != null && SamePath(previous, Path.Combine(Legacy, "Luma.exe")))
         {
             foreach (string file in Preferences)
             {
-                string source = Path.Combine(Legacy, file), target = Path.Combine(location, file);
-                if (File.Exists(source) && !File.Exists(target)) File.Copy(source, target);
+                CopyLegacyFile(location, file, changed);
             }
-            TakeLegacyData(location, "safety");
-            TakeLegacyData(location, "vpn");
+            TakeLegacyData(location, "safety", changed, createdDirectories);
+            if (vpn) TakeLegacyData(location, "vpn", changed, createdDirectories);
         }
-        string vpn = Path.Combine(location, "vpn");
-        if (Directory.Exists(vpn)) return;
-        Directory.CreateDirectory(vpn);
-        Entry(archive, "rules.default.pac").ExtractToFile(Path.Combine(vpn, "rules.template.pac"));
-        File.WriteAllText(Path.Combine(vpn, "custom-rules.json"), "{\"direct\":[],\"proxy\":[]}");
-        File.WriteAllText(Path.Combine(vpn, "disabled.flag"), "");
     }
 
-    static void TakeLegacyData(string location, string folder)
+    static void CopyLegacyFile(string location, string name, List<string> changed)
+    {
+        string source = Path.Combine(Legacy, name), target = Path.Combine(location, name);
+        if (!File.Exists(source) || File.Exists(target)) return;
+        changed.Add(name);
+        File.Copy(source, target);
+    }
+
+    static string ProfileFolder(string location, string name, List<string> createdDirectories)
+    {
+        string path = Path.Combine(location, name);
+        if (!Directory.Exists(path))
+        {
+            Directory.CreateDirectory(path);
+            createdDirectories.Add(path);
+        }
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("Папка настроек является ссылкой.");
+        return path;
+    }
+
+    static void TakeLegacyData(string location, string folder, List<string> changed, List<string> createdDirectories)
     {
         string source = Path.Combine(Legacy, folder), target = Path.Combine(location, folder);
         if (!Directory.Exists(source) || Directory.Exists(target)) return;
-        Directory.CreateDirectory(target);
-        foreach (string file in Directory.GetFiles(source)) File.Copy(file, Path.Combine(target, Path.GetFileName(file)));
+        ProfileFolder(location, folder, createdDirectories);
+        foreach (string file in Directory.GetFiles(source))
+        {
+            string name = Path.Combine(folder, Path.GetFileName(file));
+            if (!String.Equals(name, VpnTemplate, StringComparison.OrdinalIgnoreCase)) CopyLegacyFile(location, name, changed);
+        }
     }
 
     static void RegisterShortcuts(string executable)

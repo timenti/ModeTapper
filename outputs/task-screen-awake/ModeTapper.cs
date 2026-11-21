@@ -12,7 +12,7 @@ using System.Windows.Forms;
 [assembly:System.Reflection.AssemblyTitle("ModeTapper")]
 [assembly:System.Reflection.AssemblyProduct("ModeTapper")]
 [assembly:System.Reflection.AssemblyDescription("Экран, питание и выборочные маршруты VPN")]
-[assembly:System.Reflection.AssemblyVersion("1.24.16.0")]
+[assembly:System.Reflection.AssemblyVersion("1.24.17.0")]
 
 internal static class PowerModes {
     internal static readonly Guid Best=new Guid("ded574b5-45a0-4f42-8737-46345c09c238");
@@ -202,6 +202,7 @@ internal sealed class TrayApp : ApplicationContext {
     string lidOverride,displayOverride;
     readonly PowerSelection powerSelection=new PowerSelection();
     readonly bool coolingSupported;
+    readonly bool vpnInstalled,camerasInstalled;
     AsusCoolingAvailability coolingAvailability;
     bool? coolingOnAc;
     bool coolingRestorePending;
@@ -215,7 +216,10 @@ internal sealed class TrayApp : ApplicationContext {
         if(Safety.Safe)mode=2;
         IntPtr handle=dispatcher.Handle;
         if(!preview&&!Safety.Safe)try{lid=new LidMonitor();}catch(Exception ex){Safety.Audit("lid.monitor",null,null,ex.Message);}
-        if(!preview&&!Safety.Safe)try{vpn=new VpnController(Path.Combine(folder,"vpn"),dispatcher);}catch(Exception ex){vpnError=ex.Message;}
+        string vpnFolder=Path.Combine(folder,"vpn");
+        vpnInstalled=preview||File.Exists(Path.Combine(vpnFolder,"rules.template.pac"));
+        camerasInstalled=preview||File.Exists(Path.Combine(folder,"ModeTapper-camera-control.exe"));
+        if(!preview&&!Safety.Safe&&vpnInstalled)try{vpn=new VpnController(vpnFolder,dispatcher);}catch(Exception ex){vpnError=ex.Message;}
         if(!preview&&!Safety.Safe){
             codexWidget=new CodexWidget(folder,dispatcher,WidgetAreas);
             utilityWidgets=new DesktopUtilityWidgets(folder,Path.Combine(Path.GetDirectoryName(root),"session_index.jsonl"),WidgetAreas);
@@ -235,7 +239,7 @@ internal sealed class TrayApp : ApplicationContext {
         if(!preview&&coolingSupported)preferredCooling=LoadCoolingPreset();
         flyout=new LumaFlyout(()=>mode,SetMode,()=>powerSelection.Current,ChangePower,
             coolingSupported,()=>coolingAvailability,()=>coolingProfile,ChangeCooling,OpenArmouryCrate,
-            ()=>ExitThread(),()=>preview||(vpn!=null&&vpn.Enabled),()=>vpn==null?vpnError:vpn.Error,()=>vpn!=null&&vpn.Waiting,
+            ()=>ExitThread(),vpnInstalled,()=>preview||(vpn!=null&&vpn.Enabled),()=>vpn==null?vpnError:vpn.Error,()=>vpn!=null&&vpn.Waiting,
             ToggleVpn,EditVpnSites,OpenHapp,()=>preview||(smartPad!=null&&smartPad.Enabled),ToggleTouchpad,
             ()=>preview||(home!=null&&home.Enabled),ToggleHome,()=>preview||(home!=null&&home.EdgesEnabled),ToggleScreenEdges,
             ()=>home!=null&&home.AnimationPlus,ToggleAnimations,
@@ -243,7 +247,7 @@ internal sealed class TrayApp : ApplicationContext {
             kind=>preview||WidgetEnabled(kind),ToggleWidget,
             ()=>!preview&&Safety.Safe,ResumeFromMenu,
             ()=>preview?(bool?)false:RotationLock.Current(),ToggleRotation,
-            ()=>preview?CameraState.Available:cameraState,()=>cameraBusy,()=>cameraLocked,OpenCamera,ToggleCamera);
+            camerasInstalled,()=>preview?CameraState.Available:cameraState,()=>cameraBusy,()=>cameraLocked,OpenCamera,ToggleCamera);
         if(vpn!=null)vpn.Changed+=()=>flyout.Invalidate();
         if(smartPad!=null)smartPad.Changed+=()=>flyout.Invalidate();
         if(home!=null){
@@ -283,6 +287,7 @@ internal sealed class TrayApp : ApplicationContext {
     }
     void RefreshPanel(){
         RefreshCooling();
+        if(!camerasInstalled)return;
         cameraState=CameraDevices.State();
         cameraLocked=cameraState==CameraState.Mixed&&CameraDevices.HasLock();
     }
