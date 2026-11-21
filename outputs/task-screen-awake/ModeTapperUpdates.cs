@@ -24,22 +24,26 @@ internal sealed class ModeTapperUpdates : IDisposable
     readonly string installed;
     Update available;
     bool busy;
+    string statusEnglish="";
     internal event Action Changed;
     internal string Status { get; private set; }
     internal bool ManualAvailable { get; private set; }
     internal bool CanAct { get { return !busy; } }
-    internal string Button { get { return available == null ? "Проверить обновления" : "Обновить до " + available.Version.ToString(3); } }
+    internal string Button { get { return busy?(available==null?"Проверяем…":"Обновление…"):
+        available==null?"Проверить обновления":"Обновить сейчас"; } }
+    internal string DisplayStatus(bool english){return english?statusEnglish:Status;}
 
     internal ModeTapperUpdates(string folder, bool preview)
     {
         installed = Path.Combine(folder, "ModeTapper.exe");
-        Status = "Текущая версия " + Current.ToString(3);
+        Status = "";
         if (preview) return;
         string result = Path.Combine(folder, ResultFile);
         try {
             if (!File.Exists(result)) return;
             Status = File.ReadAllText(result);
             ManualAvailable = Status.StartsWith("Ошибка", StringComparison.Ordinal);
+            statusEnglish=ManualAvailable?"Update failed. You can download manually.":"Installed version "+Current.ToString(3)+".";
             File.Delete(result);
         }
         catch (IOException) { }
@@ -53,33 +57,32 @@ internal sealed class ModeTapperUpdates : IDisposable
         busy = true;
         ManualAvailable = false;
         bool installing = available != null;
-        SetStatus(installing ? "Скачиваем установщик…" : "Проверяем версии на GitHub…");
+        SetStatus(installing?"Скачиваем установщик…":"Проверяем версии на GitHub…",
+            installing?"Downloading installer…":"Checking GitHub releases…");
         try {
             if (!installing) {
-                Update candidate;
-                using (var request = Request(Api))
-                using (var response = await Client.SendAsync(request, token)) {
-                    response.EnsureSuccessStatusCode();
-                    candidate = ReadRelease(await response.Content.ReadAsStringAsync(), Current);
-                }
-                if (candidate == null) SetStatus("Уже установлена актуальная версия.");
+                var check=CheckAsync(token);
+                await Task.WhenAll(check,Task.Delay(1100,token));
+                Update candidate=await check;
+                if (candidate == null) SetStatus("Уже установлена актуальная версия.","ModeTapper is up to date.");
                 else {
+                    string next=candidate.Version.ToString(3);
                     bool canUpdate = await Task.Run(() => ManagedInstall() && UpdatePublisher.IsTrusted(installed), token);
                     if (canUpdate) {
                         available = candidate;
-                        SetStatus("Доступна версия " + candidate.Version.ToString(3) + ".");
+                        SetStatus("Доступно обновление ModeTapper "+next,"ModeTapper update available: "+next);
                     }
                     else {
                         ManualAvailable = true;
-                        SetStatus("Доступна " + candidate.Version.ToString(3) + ". Скачайте установщик вручную.");
+                        SetStatus("Версия "+next+" доступна для ручной загрузки.","Version "+next+" is available for manual download.");
                     }
                 }
             }
             else {
-                var progress = new Progress<int>(percent => SetStatus("Скачиваем установщик · " + percent + "%"));
+                var progress = new Progress<int>(percent => SetStatus("Скачиваем · "+percent+"%","Downloading · "+percent+"%"));
                 string package = await Download(available, installed, progress, token);
                 token.ThrowIfCancellationRequested();
-                SetStatus("Устанавливаем обновление…");
+                SetStatus("Устанавливаем обновление…","Installing update…");
                 using (var child = Process.Start(new ProcessStartInfo(package, "--install-update " + Process.GetCurrentProcess().Id) {
                     UseShellExecute = false, CreateNoWindow = true
                 })) {
@@ -93,8 +96,12 @@ internal sealed class ModeTapperUpdates : IDisposable
             if (token.IsCancellationRequested) return;
             available = null;
             ManualAvailable = true;
-            try { Safety.Audit("update", null, null, ex.Message); } catch { }
-            SetStatus(installing ? "Ошибка обновления. Доступно ручное скачивание." : "Не удалось проверить обновления.");
+            try {
+                var cause=ex.GetBaseException();
+                Safety.Audit("update",null,null,cause.GetType().Name+": "+cause.Message);
+            }catch{}
+            SetStatus(installing?"Ошибка обновления. Доступно ручное скачивание.":"Не удалось проверить обновления.",
+                installing?"Update failed. You can download manually.":"Could not check for updates.");
         }
         finally {
             busy = false;
@@ -114,13 +121,14 @@ internal sealed class ModeTapperUpdates : IDisposable
     internal void OpenRelease()
     {
         try { using (Process.Start(new ProcessStartInfo(ReleasesPage) { UseShellExecute = true })) { } }
-        catch (System.ComponentModel.Win32Exception) { SetStatus("Не удалось открыть страницу GitHub."); }
+        catch (System.ComponentModel.Win32Exception) { SetStatus("Не удалось открыть страницу GitHub.","Could not open GitHub."); }
     }
 
-    void SetStatus(string status)
+    void SetStatus(string status,string english)
     {
         if (lifetime.IsCancellationRequested) return;
         Status = status;
+        statusEnglish=english;
         if (Changed != null) Changed();
     }
 
@@ -129,6 +137,15 @@ internal sealed class ModeTapperUpdates : IDisposable
         var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.UserAgent.ParseAdd("ModeTapper/" + Current.ToString(3));
         return request;
+    }
+
+    internal static async Task<Update> CheckAsync(CancellationToken token)
+    {
+        using(var request=Request(Api))
+        using(var response=await Client.SendAsync(request,token).ConfigureAwait(false)){
+            response.EnsureSuccessStatusCode();
+            return ReadRelease(await response.Content.ReadAsStringAsync().ConfigureAwait(false),Current);
+        }
     }
 
     internal static Update ReadRelease(string json, Version current)

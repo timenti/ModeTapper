@@ -84,7 +84,7 @@ internal sealed class SetupWindow : Form
         MaximizeBox = false;
         MinimizeBox = false;
         var working = Screen.PrimaryScreen.WorkingArea;
-        scale = Math.Min(GetDpiForSystem() / 96f, Math.Min((working.Width - 24) / DialogWidth, (working.Height - 70) / 465f));
+        scale = Math.Min(GetDpiForSystem() / 96f, Math.Min((working.Width - 24) / DialogWidth, (working.Height - 70) / 485f));
         AutoScaleMode = AutoScaleMode.None;
         headingFont = new Font("Segoe UI Semibold", D(34), FontStyle.Regular, GraphicsUnit.Pixel);
         bodyFont = new Font("Segoe UI", D(14), FontStyle.Regular, GraphicsUnit.Pixel);
@@ -100,21 +100,15 @@ internal sealed class SetupWindow : Form
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         Controls.Add(layout);
 
-        var hero = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
-        hero.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        hero.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(190)));
-        hero.Controls.Add(MakeLabel("ModeTapper", Ink, headingFont), 0, 0);
-        var version = MakeLabel(InstallFiles.PackageVersion.ToString(3) + "  ·  Windows 11 x64", Muted, detailFont);
-        version.TextAlign = ContentAlignment.MiddleRight;
-        hero.Controls.Add(version, 1, 0);
-        AddRow(layout, hero, 46);
+        AddRow(layout, CenterLabel("ModeTapper", Ink, headingFont), 44);
+        AddRow(layout, CenterLabel(InstallFiles.PackageVersion.ToString(3) + "  ·  Windows 11 x64", Muted, detailFont), 23);
 
         string summary = fresh ? "Выберите папку и компоненты для первой установки." :
             newer ? "Установлена версия " + installedVersion.ToString(3) + ". Для её обслуживания нужен более новый установщик." :
             update ? "Версия " + installedVersion.ToString(3) + " будет обновлена. Ваши настройки сохранятся." :
             needsRepair ? "Найдена установка ModeTapper. Можно восстановить файлы и ярлыки." :
             "ModeTapper уже установлен. Отсюда можно добавить компоненты или восстановить файлы.";
-        AddRow(layout, MakeLabel(summary, Muted, bodyFont), fresh ? 34 : 48);
+        AddRow(layout, CenterLabel(summary, Muted, bodyFont), fresh ? 35 : 47);
 
         path = new TextBox { Text = existing ?? InstallFiles.DefaultPath, BackColor = Surface, ForeColor = Ink,
             BorderStyle = BorderStyle.None, Margin = Padding.Empty,
@@ -144,33 +138,29 @@ internal sealed class SetupWindow : Form
             if (addVpn) AddRow(layout, Option("Маршрутизация VPN", "Правила для сайтов через локальный прокси Happ.", vpn), 56);
         }
 
-        status = MakeLabel(newer ? "" : fresh ? "Компоненты можно добавить позже тем же установщиком." :
+        status = CenterLabel(newer ? "" : fresh ? "Компоненты можно добавить позже тем же установщиком." :
             update ? "Установленные компоненты сохранятся." : "", Muted, detailFont);
         status.Margin = Inset(0, 6, 0, 0);
         AddRow(layout, status, 43);
         progress = new SetupProgress { Dock = DockStyle.Fill, Margin = Padding.Empty, AccessibleName = "Ход установки", Visible = false };
         AddRow(layout, progress, 2);
 
-        var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, Margin = Inset(0, 9, 0, 0) };
-        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(132)));
-        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(91)));
-        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(167)));
+        var actions = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Anchor = AnchorStyles.None, WrapContents = false, Margin = Inset(0, 8, 0, 0) };
         repair = MakeButton("Восстановить", false);
-        repair.Dock = DockStyle.Fill;
         repair.Click += (sender, args) => Install(true);
         repair.Visible = !fresh && !update && !newer;
         primary = MakeButton("", true);
-        primary.Dock = DockStyle.Fill;
-        primary.Margin = Inset(9, 0, 0, 0);
         primary.Click += (sender, args) => Install(false);
         cancel = MakeButton("Закрыть", false);
-        cancel.Dock = DockStyle.Fill;
         cancel.Click += (sender, args) => Close();
-        actions.Controls.Add(repair, 0, 0);
-        actions.Controls.Add(cancel, 2, 0);
-        actions.Controls.Add(primary, 3, 0);
-        AddRow(layout, actions, 49);
+        foreach (Button button in new[] { cancel, repair, primary })
+        {
+            button.Size = new Size(D(157), D(38));
+            button.Margin = Inset(4, 0, 4, 0);
+            actions.Controls.Add(button);
+        }
+        AddRow(layout, actions, 54);
 
         int rowsHeight = 0;
         foreach (RowStyle row in layout.RowStyles) rowsHeight += (int)row.Height;
@@ -196,6 +186,13 @@ internal sealed class SetupWindow : Form
     {
         return new Label { Text = text, ForeColor = color, Font = font, Dock = DockStyle.Fill,
             Margin = Padding.Empty, TextAlign = ContentAlignment.MiddleLeft, UseMnemonic = false };
+    }
+
+    static Label CenterLabel(string text, Color color, Font font)
+    {
+        var label = MakeLabel(text, color, font);
+        label.TextAlign = ContentAlignment.MiddleCenter;
+        return label;
     }
 
     Control Option(string title, string description, SetupToggle toggle)
@@ -237,6 +234,13 @@ internal sealed class SetupWindow : Form
         int dark = 1, round = 2;
         DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int));
         DwmSetWindowAttribute(Handle, 33, ref round, sizeof(int));
+        if (!SystemInformation.HighContrast)
+        {
+            int caption = ColorTranslator.ToWin32(Background);
+            int captionInk = ColorTranslator.ToWin32(Ink);
+            DwmSetWindowAttribute(Handle, 35, ref caption, sizeof(int));
+            DwmSetWindowAttribute(Handle, 36, ref captionInk, sizeof(int));
+        }
     }
 
     void UpdateAction()

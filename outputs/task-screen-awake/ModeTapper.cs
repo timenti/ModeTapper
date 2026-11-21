@@ -251,7 +251,8 @@ internal sealed class TrayApp : ApplicationContext {
             kind=>preview||WidgetEnabled(kind),ToggleWidget,
             ()=>!preview&&Safety.Safe,ResumeFromMenu,
             ()=>preview?(bool?)false:RotationLock.Current(),ToggleRotation,
-            camerasInstalled,()=>preview?CameraState.Available:cameraState,()=>cameraBusy,()=>cameraLocked,OpenCamera,ToggleCamera,updates);
+            camerasInstalled,()=>preview?CameraState.Available:cameraState,()=>cameraBusy,()=>cameraLocked,OpenCamera,ToggleCamera,updates,
+            new ModeTapperPreferences(folder,preview));
         updates.Changed+=()=>flyout.Invalidate();
         if(vpn!=null)vpn.Changed+=()=>flyout.Invalidate();
         if(smartPad!=null)smartPad.Changed+=()=>flyout.Invalidate();
@@ -474,8 +475,8 @@ internal sealed class TrayApp : ApplicationContext {
             foreach(var image in images)w.Write(image);
         }
     }
-    internal void RenderPreview(string path) {
-        flyout.SavePreview(path);
+    internal void RenderPreview(string path,bool settings=false) {
+        flyout.SavePreview(path,settings);
     }
     void SetMode(int value) {
         if(Safety.Safe)return;mode=value;
@@ -635,7 +636,7 @@ internal static class Program {
         if(args.Length>0 && args[0]=="--self-test")return TrayApp.SelfTest();
 
         if(args.Length>1 && args[0]=="--export-icon"){TrayApp.ExportIcon(args[1]);return 0;}
-        if(args.Length>1 && args[0]=="--render-preview"){Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);using(var app=new TrayApp(true))app.RenderPreview(args[1]);return 0;}
+        if(args.Length>1 && args[0]=="--render-preview"){Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);using(var app=new TrayApp(true))app.RenderPreview(args[1],args.Length==3&&args[2]=="settings");return 0;}
         string command=args.Length>0?args[0]:"--side-panel";
         bool maintenance=command=="--safe-mode"||command=="--rollback"||command=="--resume"||command=="--carousel-test"||command=="--power-test"||command=="--restore-lid-sleep";
         if(maintenance)try{using(var stop=EventWaitHandle.OpenExisting("Local\\LumaStopV2"))stop.Set();}catch(WaitHandleCannotBeOpenedException){}
