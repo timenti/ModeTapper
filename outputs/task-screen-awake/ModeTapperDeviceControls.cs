@@ -16,8 +16,8 @@ using System.Windows.Forms;
 [assembly: System.Reflection.AssemblyTitle("Управление камерами ModeTapper")]
 [assembly: System.Reflection.AssemblyProduct("ModeTapper")]
 [assembly: System.Reflection.AssemblyCompany("TIMENTI")]
-[assembly: System.Reflection.AssemblyVersion("2.0.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("2.0.0.0")]
+[assembly: System.Reflection.AssemblyVersion("2.0.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("2.0.1.0")]
 #endif
 
 internal enum CameraState { Unknown, Available, Blocked, Mixed, Missing }

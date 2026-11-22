@@ -17,8 +17,8 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle("Установка ModeTapper")]
 [assembly: AssemblyProduct("ModeTapper")]
 [assembly: AssemblyCompany("TIMENTI")]
-[assembly: AssemblyVersion("2.0.0.0")]
-[assembly: AssemblyFileVersion("2.0.0.0")]
+[assembly: AssemblyVersion("2.0.1.0")]
+[assembly: AssemblyFileVersion("2.0.1.0")]
 
 internal static class ModeTapperSetup
 {
@@ -196,7 +196,7 @@ internal sealed class SetupWindow : Form
         product.Visible = !compact;
         version.Visible = !compact;
         compactBrand.Visible = compact;
-        intro.Font = showProgress ? progressTitleFont : bodyFont;
+        intro.Font = showProgress ? progressTitleFont : complete ? titleFont : bodyFont;
         layout.RowStyles[0].Height = D(compact ? 0 : 38);
         layout.RowStyles[1].Height = D(compact ? 0 : 19);
         layout.RowStyles[2].Height = D(compact ? 33 : 0);
@@ -313,7 +313,19 @@ internal sealed class SetupWindow : Form
 
     async void Install(bool restoring)
     {
-        if (complete) { Close(); return; }
+        if (complete)
+        {
+            if (fresh)
+            {
+                primary.Enabled = false;
+                string installedPath = path.Text;
+                try { await Task.Run(() => InstallFiles.LaunchInstalled(installedPath)); }
+                catch (System.ComponentModel.Win32Exception) { ShowLaunchError(); return; }
+                catch (IOException) { ShowLaunchError(); return; }
+            }
+            if (!IsDisposed) Close();
+            return;
+        }
         if (busy || newer) return;
         busy = true;
         path.ReadOnly = true;
@@ -331,7 +343,7 @@ internal sealed class SetupWindow : Form
             progress.Advance(change.Key);
         });
         var report = (IProgress<KeyValuePair<int, string>>)updates;
-        string error = await Task.Run(() => InstallFiles.Run(destination, addCameras, addVpn, restoring || needsRepair,
+        string error = await Task.Run(() => InstallFiles.Run(destination, addCameras, addVpn, restoring || needsRepair, !fresh,
             (value, message) => report.Report(new KeyValuePair<int, string>(value, message))));
         busy = false;
         progress.Reset();
@@ -340,15 +352,22 @@ internal sealed class SetupWindow : Form
         {
             complete = true;
             Result = 0;
-            intro.Text = update ? "Обновление завершено" : "ModeTapper готов";
+            intro.Text = update ? "Обновление завершено" : fresh ? "ModeTapper установлен" : "ModeTapper готов";
             status.ForeColor = Muted;
             status.Text = restoring || needsRepair ? "Файлы и ярлыки восстановлены. Ваши настройки сохранены." :
                 update ? "Настройки и компоненты сохранены." :
-                fresh ? "Откройте ModeTapper из меню «Пуск»." : "Компоненты добавлены.";
-            primary.Text = "Готово";
+                fresh ? "Приложение доступно в меню «Пуск»." : "Компоненты добавлены.";
+            primary.Text = fresh ? "Запустить ModeTapper" : "Завершить";
             primary.Visible = true;
             AcceptButton = primary;
-            repair.Visible = cancel.Visible = false;
+            repair.Visible = false;
+            cancel.Visible = fresh;
+            if (fresh)
+            {
+                cancel.Text = "Завершить";
+                cancel.Width = D(86);
+                primary.Width = D(160);
+            }
             FitLayout(false, false);
         }
         else
@@ -362,6 +381,15 @@ internal sealed class SetupWindow : Form
             browse.Enabled = fresh;
             FitLayout(true, false);
         }
+    }
+
+    void ShowLaunchError()
+    {
+        if (IsDisposed) return;
+        primary.Enabled = true;
+        status.ForeColor = Red;
+        status.Text = "Не удалось запустить ModeTapper. Попробуйте открыть его из меню «Пуск».";
+        FitLayout(false, false);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -709,7 +737,7 @@ internal static class InstallFiles
         return entry;
     }
 
-    internal static string Run(string selected, bool cameras, bool vpn, bool repair, Action<int, string> progress)
+    internal static string Run(string selected, bool cameras, bool vpn, bool repair, bool launchWhenDone, Action<int, string> progress)
     {
         using (var gate = new Mutex(false, @"Local\ModeTapperSetup"))
         {
@@ -717,12 +745,12 @@ internal static class InstallFiles
             try { acquired = gate.WaitOne(0); }
             catch (AbandonedMutexException) { acquired = true; }
             if (!acquired) return "Установщик ModeTapper уже запущен.";
-            try { return Install(selected, cameras, vpn, repair, progress); }
+            try { return Install(selected, cameras, vpn, repair, launchWhenDone, progress); }
             finally { gate.ReleaseMutex(); }
         }
     }
 
-    static string Install(string selected, bool cameras, bool vpn, bool repair, Action<int, string> progress)
+    static string Install(string selected, bool cameras, bool vpn, bool repair, bool launchWhenDone, Action<int, string> progress)
     {
         string directory = null, backup = null, previous = null;
         var changed = new List<string>();
@@ -786,9 +814,12 @@ internal static class InstallFiles
             progress(74, "Настраиваем ярлыки…");
             RegisterShortcuts(executable);
             using (var key = Registry.CurrentUser.CreateSubKey(AppKey)) key.SetValue("InstallLocation", directory);
-            progress(92, "Запускаем приложение…");
-            int pid = Start(executable, "--background");
-            if (guard != null) WaitForTray(directory, pid);
+            if (launchWhenDone)
+            {
+                progress(92, "Запускаем приложение…");
+                int pid = Start(executable, "--background");
+                if (guard != null) WaitForTray(directory, pid);
+            }
             return null;
         }
         catch (Exception ex)
@@ -1001,11 +1032,18 @@ internal static class InstallFiles
                     dynamic task = tasks.GetTask(name);
                     if (task.Enabled && SamePath((string)task.Definition.Actions.Item(1).Path, executable)) return true;
                 }
+                // The scheduler maps a missing task (0x80070002) to FileNotFoundException.
+                catch (FileNotFoundException) { }
                 catch (COMException) { }
             return false;
         }
         catch (COMException) { return false; }
         finally { Marshal.ReleaseComObject(scheduler); }
+    }
+
+    internal static void LaunchInstalled(string directory)
+    {
+        Start(Path.Combine(directory.Trim(), Program), "--side-panel");
     }
 
     static int Start(string executable, string arguments)

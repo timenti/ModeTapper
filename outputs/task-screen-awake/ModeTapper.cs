@@ -13,8 +13,8 @@ using System.Windows.Forms;
 [assembly:System.Reflection.AssemblyProduct("ModeTapper")]
 [assembly:System.Reflection.AssemblyDescription("Экран, питание и выборочные маршруты VPN")]
 [assembly:System.Reflection.AssemblyCompany("TIMENTI")]
-[assembly:System.Reflection.AssemblyVersion("2.0.0.0")]
-[assembly:System.Reflection.AssemblyFileVersion("2.0.0.0")]
+[assembly:System.Reflection.AssemblyVersion("2.0.1.0")]
+[assembly:System.Reflection.AssemblyFileVersion("2.0.1.0")]
 
 internal static class PowerModes {
     internal static readonly Guid Best=new Guid("ded574b5-45a0-4f42-8737-46345c09c238");
