@@ -27,7 +27,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = $env:GITHUB_REF_NAME.Substring('release/'.Length)
-          if ($tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Expected release/vMAJOR.MINOR.PATCH' }
+          if ($tag -cnotmatch '^v(0|[1-9][0-9]*)\.[0-9]\.[0-9]$') { throw 'Expected release/vMAJOR.MINOR.PATCH with single-digit minor and patch' }
           $notes = "docs/releases/$tag.md"
           if (!(Test-Path -LiteralPath $notes -PathType Leaf)) { throw "Add release notes at $notes" }
           ./work/Build-Installer.ps1
@@ -41,5 +41,6 @@ jobs:
         shell: pwsh
         run: |
           $tag = $env:GITHUB_REF_NAME.Substring('release/'.Length)
-          gh release create $tag dist/ModeTapper.exe dist/SHA256SUMS.txt --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "ModeTapper $($tag.Substring(1))" --notes-file "docs/releases/$tag.md" --latest
+          $display = $tag.Substring(1) -replace '(\.0){1,2}$', ''
+          gh release create $tag dist/ModeTapper.exe dist/SHA256SUMS.txt --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "ModeTapper $display" --notes-file "docs/releases/$tag.md" --latest
           if ($LASTEXITCODE -ne 0) { throw 'GitHub publication failed' }

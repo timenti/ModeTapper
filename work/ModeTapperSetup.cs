@@ -7,6 +7,8 @@ using System.IO;
 using System.IO.Compression;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -15,8 +17,8 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle("Установка ModeTapper")]
 [assembly: AssemblyProduct("ModeTapper")]
 [assembly: AssemblyCompany("TIMENTI")]
-[assembly: AssemblyVersion("1.24.21.0")]
-[assembly: AssemblyFileVersion("1.24.21.0")]
+[assembly: AssemblyVersion("2.0.0.0")]
+[assembly: AssemblyFileVersion("2.0.0.0")]
 
 internal static class ModeTapperSetup
 {
@@ -40,14 +42,15 @@ internal static class ModeTapperSetup
 
 internal sealed class SetupWindow : Form
 {
-    const int DialogWidth = 560;
+    const int DialogWidth = 510;
+    const int ProgressWidth = 296;
     static readonly Color Background = Color.FromArgb(22, 22, 22);
     static readonly Color Surface = Color.FromArgb(29, 29, 29);
-    static readonly Color Border = Color.FromArgb(64, 66, 67);
-    static readonly Color Hover = Color.FromArgb(42, 44, 44);
+    static readonly Color Border = Color.FromArgb(63, 63, 63);
+    static readonly Color Badge = Color.FromArgb(37, 37, 37);
+    static readonly Color Hover = Color.FromArgb(43, 43, 43);
     static readonly Color Ink = Color.FromArgb(246, 246, 246);
-    static readonly Color Muted = Color.FromArgb(174, 176, 177);
-    static readonly Color Green = Color.FromArgb(126, 216, 170);
+    static readonly Color Muted = Color.FromArgb(173, 173, 173);
     static readonly Color Red = Color.FromArgb(235, 125, 125);
 
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
@@ -57,10 +60,15 @@ internal sealed class SetupWindow : Form
     readonly bool fresh, update, newer, needsRepair;
     readonly TextBox path;
     readonly SetupToggle cameras, vpn;
-    readonly Label status;
+    readonly Label product, version, intro, status;
+    readonly ProgressBrand compactBrand;
+    readonly TableLayoutPanel layout;
+    readonly int firstOptionRow, statusRow, progressRow, actionsRow;
+    readonly int[] optionRowHeights;
+    readonly string summary;
     readonly Button browse, cancel, primary, repair;
     readonly SetupProgress progress;
-    readonly Font headingFont, bodyFont, detailFont, titleFont;
+    readonly Font headingFont, progressTitleFont, bodyFont, detailFont, titleFont;
     readonly float scale;
     bool busy, complete;
     internal int Result { get; private set; }
@@ -79,31 +87,38 @@ internal sealed class SetupWindow : Form
         MaximizeBox = false;
         MinimizeBox = false;
         var working = Screen.PrimaryScreen.WorkingArea;
-        scale = Math.Min(GetDpiForSystem() / 96f, Math.Min((working.Width - 24) / DialogWidth, (working.Height - 70) / 485f));
+        scale = Math.Min(GetDpiForSystem() / 96f, Math.Min((working.Width - 24f) / DialogWidth, (working.Height - 70) / 415f));
         AutoScaleMode = AutoScaleMode.None;
-        headingFont = new Font("Segoe UI Semibold", D(34), FontStyle.Regular, GraphicsUnit.Pixel);
+        headingFont = new Font("Segoe UI Semibold", D(31), FontStyle.Regular, GraphicsUnit.Pixel);
+        progressTitleFont = new Font("Segoe UI Semibold", D(25), FontStyle.Regular, GraphicsUnit.Pixel);
         bodyFont = new Font("Segoe UI", D(14), FontStyle.Regular, GraphicsUnit.Pixel);
         detailFont = new Font("Segoe UI", D(13), FontStyle.Regular, GraphicsUnit.Pixel);
-        titleFont = new Font("Segoe UI Semibold", D(15), FontStyle.Regular, GraphicsUnit.Pixel);
+        titleFont = new Font("Segoe UI Semibold", D(16), FontStyle.Regular, GraphicsUnit.Pixel);
         Font = bodyFont;
-        ClientSize = new Size(D(DialogWidth), D(430));
+        ClientSize = new Size(D(DialogWidth), D(390));
         BackColor = Background;
         ForeColor = Ink;
-        Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+        Icon = Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location);
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = Inset(26, 19, 26, 21), Margin = Padding.Empty };
+        layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = Inset(23, 14, 23, 16), Margin = Padding.Empty };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         Controls.Add(layout);
 
-        AddRow(layout, CenterLabel("ModeTapper", Ink, headingFont), 44);
-        AddRow(layout, CenterLabel(InstallFiles.PackageVersion.ToString(3) + "  ·  Windows 11 x64", Muted, detailFont), 23);
+        product = CenterLabel("ModeTapper", Ink, headingFont);
+        string releaseVersion = ModeTapperVersion.Display(InstallFiles.PackageVersion);
+        version = CenterLabel(releaseVersion + "  ·  Windows 11 x64", Muted, detailFont);
+        AddRow(layout, product, 38);
+        AddRow(layout, version, 19);
+        compactBrand = new ProgressBrand(Icon, releaseVersion, titleFont, detailFont, D(28), D(8), D(21), D(7));
+        AddRow(layout, compactBrand, 0);
 
-        string summary = fresh ? "Выберите папку и компоненты для первой установки." :
-            newer ? "Установлена версия " + installedVersion.ToString(3) + ". Для её обслуживания нужен более новый установщик." :
-            update ? "Версия " + installedVersion.ToString(3) + " будет обновлена. Ваши настройки сохранятся." :
-            needsRepair ? "Найдена установка ModeTapper. Можно восстановить файлы и ярлыки." :
-            "ModeTapper уже установлен. Отсюда можно добавить компоненты или восстановить файлы.";
-        AddRow(layout, CenterLabel(summary, Muted, bodyFont), fresh ? 35 : 47);
+        summary = fresh ? "Выберите папку и дополнительные компоненты." :
+            newer ? "Установлена более новая версия " + ModeTapperVersion.Display(installedVersion) + "." :
+            update ? "Обновление с версии " + ModeTapperVersion.Display(installedVersion) :
+            needsRepair ? "Восстановление файлов и ярлыков" : "Установка и восстановление компонентов";
+        intro = CenterLabel(summary, Ink, bodyFont);
+        AddRow(layout, intro, 29);
+        firstOptionRow = layout.RowCount;
 
         path = new TextBox { Text = existing ?? InstallFiles.DefaultPath, BackColor = Surface, ForeColor = Ink,
             BorderStyle = BorderStyle.None, Margin = Padding.Empty,
@@ -112,8 +127,8 @@ internal sealed class SetupWindow : Form
         browse.Click += Browse;
         if (fresh)
         {
-            AddRow(layout, MakeLabel("Папка установки", Ink, titleFont), 28);
-            AddRow(layout, new SetupPathField(path, browse, D(11), D(106), D(7)), 39);
+            AddRow(layout, MakeLabel("Папка установки", Ink, titleFont), 23);
+            AddRow(layout, new SetupPathField(path, browse, D(10), D(100), D(7)), 35);
         }
 
         cameras = new SetupToggle("Управление камерами", D(42), D(23));
@@ -125,23 +140,27 @@ internal sealed class SetupWindow : Form
             if (addCameras || addVpn)
             {
                 var caption = MakeLabel("Дополнительные компоненты", Ink, titleFont);
-                caption.Margin = Inset(0, 10, 0, 0);
-                AddRow(layout, caption, 39);
+                caption.Margin = Inset(0, 5, 0, 0);
+                AddRow(layout, caption, 29);
             }
-            if (addCameras) AddRow(layout, Option("Управление камерами", "Включение и отключение камер из боковой панели.", cameras), 56);
+            if (addCameras) AddRow(layout, Option("Управление камерами", "Включение и отключение камер из боковой панели.", cameras), 49);
             if (addCameras && addVpn) AddRow(layout, new Panel { BackColor = Border, Dock = DockStyle.Fill, Margin = Padding.Empty }, 1);
-            if (addVpn) AddRow(layout, Option("Маршрутизация VPN", "Правила для сайтов через локальный прокси Happ.", vpn), 56);
+            if (addVpn) AddRow(layout, Option("Маршрутизация VPN", "Правила для сайтов через локальный прокси Happ.", vpn), 49);
         }
 
-        status = CenterLabel(newer ? "" : fresh ? "Компоненты можно добавить позже тем же установщиком." :
-            update ? "Установленные компоненты сохранятся." : "", Muted, detailFont);
-        status.Margin = Inset(0, 6, 0, 0);
-        AddRow(layout, status, 43);
-        progress = new SetupProgress { Dock = DockStyle.Fill, Margin = Padding.Empty, AccessibleName = "Ход установки", Visible = false };
-        AddRow(layout, progress, 2);
+        statusRow = layout.RowCount;
+        optionRowHeights = new int[statusRow - firstOptionRow];
+        for (int i = 0; i < optionRowHeights.Length; i++) optionRowHeights[i] = (int)layout.RowStyles[firstOptionRow + i].Height;
+        status = CenterLabel(fresh ? "Компоненты можно добавить позже." :
+            update ? "Настройки и установленные компоненты сохранятся." : "", Muted, detailFont);
+        AddRow(layout, status, 0);
+        progressRow = layout.RowCount;
+        progress = new SetupProgress { Dock = DockStyle.Fill, Margin = Padding.Empty, AccessibleName = "Ход установки",
+            AccessibleRole = AccessibleRole.ProgressBar, Font = detailFont, Visible = false };
+        AddRow(layout, progress, 0);
 
         var actions = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Anchor = AnchorStyles.None, WrapContents = false, Margin = Inset(0, 8, 0, 0) };
+            Anchor = AnchorStyles.None, WrapContents = false, Margin = Inset(0, 6, 0, 0) };
         repair = MakeButton("Восстановить", false);
         repair.Click += (sender, args) => Install(true);
         repair.Visible = !fresh && !update && !newer;
@@ -151,15 +170,13 @@ internal sealed class SetupWindow : Form
         cancel.Click += (sender, args) => Close();
         foreach (Button button in new[] { cancel, repair, primary })
         {
-            button.Size = new Size(D(157), D(38));
+            button.Size = new Size(D(button == primary ? 162 : 126), D(35));
             button.Margin = Inset(4, 0, 4, 0);
             actions.Controls.Add(button);
         }
-        AddRow(layout, actions, 54);
-
-        int rowsHeight = 0;
-        foreach (RowStyle row in layout.RowStyles) rowsHeight += (int)row.Height;
-        ClientSize = new Size(D(DialogWidth), rowsHeight + layout.Padding.Vertical);
+        actionsRow = layout.RowCount;
+        AddRow(layout, actions, 44);
+        FitLayout(true, false);
         cameras.CheckedChanged += (sender, args) => UpdateAction();
         vpn.CheckedChanged += (sender, args) => UpdateAction();
         UpdateAction();
@@ -168,6 +185,43 @@ internal sealed class SetupWindow : Form
 
     int D(int value) { return (int)Math.Round(value * scale); }
     Padding Inset(int left, int top, int right, int bottom) { return new Padding(D(left), D(top), D(right), D(bottom)); }
+
+    void FitLayout(bool showOptions, bool showProgress)
+    {
+        layout.SuspendLayout();
+        bool compact = !showOptions;
+        int width = D(compact ? ProgressWidth : DialogWidth);
+        int previousWidth = ClientSize.Width;
+        layout.Padding = compact ? Inset(17, 11, 17, 14) : Inset(23, 14, 23, 16);
+        product.Visible = !compact;
+        version.Visible = !compact;
+        compactBrand.Visible = compact;
+        intro.Font = showProgress ? progressTitleFont : bodyFont;
+        layout.RowStyles[0].Height = D(compact ? 0 : 38);
+        layout.RowStyles[1].Height = D(compact ? 0 : 19);
+        layout.RowStyles[2].Height = D(compact ? 33 : 0);
+        layout.RowStyles[3].Height = D(showProgress ? 35 : 29);
+        for (int i = 0; i < optionRowHeights.Length; i++)
+        {
+            int row = firstOptionRow + i;
+            layout.GetControlFromPosition(0, row).Visible = showOptions;
+            layout.RowStyles[row].Height = showOptions ? optionRowHeights[i] : 0;
+        }
+        int captionHeight = String.IsNullOrEmpty(status.Text) ? 0 :
+            TextRenderer.MeasureText(status.Text, detailFont, new Size(width - layout.Padding.Horizontal, D(120)),
+                TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height + D(7);
+        status.Visible = captionHeight > 0;
+        layout.RowStyles[statusRow].Height = captionHeight;
+        progress.Visible = showProgress;
+        layout.RowStyles[progressRow].Height = showProgress ? D(22) : 0;
+        layout.GetControlFromPosition(0, actionsRow).Visible = !showProgress;
+        layout.RowStyles[actionsRow].Height = showProgress ? 0 : D(44);
+        int rowsHeight = 0;
+        foreach (RowStyle row in layout.RowStyles) rowsHeight += (int)row.Height;
+        ClientSize = new Size(width, rowsHeight + layout.Padding.Vertical);
+        if (Visible) Left += (previousWidth - width) / 2;
+        layout.ResumeLayout(true);
+    }
 
     void AddRow(TableLayoutPanel layout, Control control, int height)
     {
@@ -264,9 +318,11 @@ internal sealed class SetupWindow : Form
         busy = true;
         path.ReadOnly = true;
         primary.Enabled = repair.Enabled = cancel.Enabled = cameras.Enabled = vpn.Enabled = browse.Enabled = false;
+        intro.Text = restoring || needsRepair ? "Восстановление" : update ? "Обновление" : "Установка";
         status.ForeColor = Muted;
+        status.Text = "Подготавливаем установку…";
         progress.Reset();
-        progress.Visible = true;
+        FitLayout(false, true);
         string destination = path.Text;
         bool addCameras = cameras.Checked, addVpn = vpn.Checked;
         var updates = new Progress<KeyValuePair<int, string>>(change => {
@@ -278,29 +334,33 @@ internal sealed class SetupWindow : Form
         string error = await Task.Run(() => InstallFiles.Run(destination, addCameras, addVpn, restoring || needsRepair,
             (value, message) => report.Report(new KeyValuePair<int, string>(value, message))));
         busy = false;
-        progress.Visible = false;
         progress.Reset();
         primary.Enabled = repair.Enabled = cancel.Enabled = true;
         if (error == null)
         {
             complete = true;
             Result = 0;
-            status.ForeColor = Green;
+            intro.Text = update ? "Обновление завершено" : "ModeTapper готов";
+            status.ForeColor = Muted;
             status.Text = restoring || needsRepair ? "Файлы и ярлыки восстановлены. Ваши настройки сохранены." :
-                fresh || update ? "ModeTapper готов. Откройте его из меню «Пуск»." : "Компоненты добавлены. Откройте боковую панель.";
+                update ? "Настройки и компоненты сохранены." :
+                fresh ? "Откройте ModeTapper из меню «Пуск»." : "Компоненты добавлены.";
             primary.Text = "Готово";
             primary.Visible = true;
             AcceptButton = primary;
             repair.Visible = cancel.Visible = false;
+            FitLayout(false, false);
         }
         else
         {
             Result = 1;
+            intro.Text = summary;
             status.ForeColor = Red;
             status.Text = error;
             cameras.Enabled = vpn.Enabled = true;
             path.ReadOnly = !fresh;
             browse.Enabled = fresh;
+            FitLayout(true, false);
         }
     }
 
@@ -317,6 +377,7 @@ internal sealed class SetupWindow : Form
             var icon = Icon;
             if (icon != null) icon.Dispose();
             headingFont.Dispose();
+            progressTitleFont.Dispose();
             bodyFont.Dispose();
             detailFont.Dispose();
             titleFont.Dispose();
@@ -346,6 +407,46 @@ internal sealed class SetupWindow : Form
             g.FillPath(brush, path);
             if (border.HasValue)
                 using (var pen = new Pen(border.Value)) g.DrawPath(pen, path);
+        }
+    }
+
+    sealed class ProgressBrand : Control
+    {
+        const TextFormatFlags TextFlags = TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix |
+            TextFormatFlags.NoPadding | TextFormatFlags.SingleLine;
+        readonly Icon icon;
+        readonly string versionText;
+        readonly Font badgeFont;
+        readonly int iconSize, gap, badgeHeight, radius;
+
+        internal ProgressBrand(Icon icon, string version, Font titleFont, Font badgeFont, int iconSize, int gap, int badgeHeight, int radius)
+        {
+            this.icon = icon;
+            versionText = version;
+            Font = titleFont;
+            this.badgeFont = badgeFont;
+            this.iconSize = iconSize;
+            this.gap = gap;
+            this.badgeHeight = badgeHeight;
+            this.radius = radius;
+            Dock = DockStyle.Fill;
+            Margin = Padding.Empty;
+            BackColor = Background;
+            DoubleBuffered = true;
+            AccessibleName = "ModeTapper, версия " + version;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            if (icon != null)
+                e.Graphics.DrawIcon(icon, new Rectangle(0, (Height - iconSize) / 2, iconSize, iconSize));
+            int badgeWidth = TextRenderer.MeasureText(versionText, badgeFont, Size.Empty, TextFlags).Width + 2 * gap;
+            var badge = new Rectangle(Width - badgeWidth, (Height - badgeHeight) / 2, badgeWidth, badgeHeight);
+            DrawSurface(e.Graphics, new RectangleF(badge.X + .5f, badge.Y + .5f, badge.Width - 1, badge.Height - 1), radius, Badge, Border);
+            TextRenderer.DrawText(e.Graphics, versionText, badgeFont, badge, Ink, TextFlags | TextFormatFlags.HorizontalCenter);
+            int nameLeft = iconSize + gap;
+            var name = new Rectangle(nameLeft, 0, Math.Max(0, badge.Left - nameLeft - gap), Height);
+            TextRenderer.DrawText(e.Graphics, "ModeTapper", Font, name, Ink, TextFlags | TextFormatFlags.EndEllipsis);
         }
     }
 
@@ -384,7 +485,7 @@ internal sealed class SetupWindow : Form
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            DrawSurface(e.Graphics, new RectangleF(0.5f, 0.5f, Width - 1, Height - 1), radius, Surface, field.Focused ? Green : Border);
+            DrawSurface(e.Graphics, new RectangleF(0.5f, 0.5f, Width - 1, Height - 1), radius, Surface, field.Focused ? Ink : Border);
         }
     }
 
@@ -410,10 +511,10 @@ internal sealed class SetupWindow : Form
         {
             e.Graphics.Clear(embedded ? Surface : Background);
             bool highlight = accent && Enabled;
-            Color fill = highlight ? (hovered ? Color.FromArgb(152, 229, 188) : Green) :
+            Color fill = highlight ? (hovered ? Color.FromArgb(221, 221, 221) : Ink) :
                 hovered && Enabled ? Hover : Surface;
             Color? outline = !embedded && !highlight ? (Color?)Border : null;
-            if (Focused && ShowFocusCues) outline = highlight ? Ink : Green;
+            if (Focused && ShowFocusCues) outline = highlight ? Background : Ink;
             DrawSurface(e.Graphics, new RectangleF(0.5f, 0.5f, Width - 1, Height - 1), radius, fill, outline);
             TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, highlight ? Background : Enabled ? Ink : Muted,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
@@ -476,7 +577,7 @@ internal sealed class SetupWindow : Form
             e.Graphics.Clear(BackColor);
             var track = new Rectangle((Width - trackWidth) / 2, (Height - trackHeight) / 2, trackWidth, trackHeight);
             bool on = Checked && Enabled;
-            DrawSurface(e.Graphics, track, trackHeight / 2, on ? Green : Hover, Focused && ShowFocusCues ? Ink : on ? Green : Border);
+            DrawSurface(e.Graphics, track, trackHeight / 2, on ? Ink : Hover, Focused && ShowFocusCues ? Ink : on ? Ink : Border);
             int inset = Math.Max(2, trackHeight / 6);
             int x = Checked ? track.Right - trackHeight + inset : track.Left + inset;
             using (var pigment = new SolidBrush(Checked && Enabled ? Background : Muted))
@@ -515,16 +616,27 @@ internal sealed class SetupWindow : Form
             };
         }
 
-        internal void Reset() { animation.Stop(); shown = target = 0; Invalidate(); }
-        internal void Advance(int value) { target = value; animation.Start(); }
+        internal void Reset() { animation.Stop(); shown = target = 0; AccessibleDescription = "0%"; Invalidate(); }
+        internal void Advance(int value)
+        {
+            target = Math.Max(0, Math.Min(100, value));
+            AccessibleDescription = target + "%";
+            animation.Start();
+        }
         protected override void OnPaint(PaintEventArgs e)
         {
-            using (var track = new SolidBrush(Border))
-            using (var fill = new SolidBrush(Green))
-            {
-                e.Graphics.FillRectangle(track, ClientRectangle);
-                e.Graphics.FillRectangle(fill, 0, 0, (int)(Width * shown / 100), Height);
-            }
+            e.Graphics.Clear(Background);
+            int percentWidth = TextRenderer.MeasureText("100%", Font).Width;
+            int railWidth = Math.Max(0, Width - percentWidth - Font.Height / 2);
+            int railHeight = Math.Max(3, Height / 4);
+            var rail = new RectangleF(0, (Height - railHeight) / 2f, railWidth, railHeight);
+            DrawSurface(e.Graphics, rail, railHeight / 2, Border, null);
+            if (shown > 0)
+                DrawSurface(e.Graphics, new RectangleF(rail.X, rail.Y, Math.Max(1, rail.Width * (float)shown / 100), rail.Height),
+                    railHeight / 2, Ink, null);
+            TextRenderer.DrawText(e.Graphics, ((int)shown) + "%", Font,
+                new Rectangle(Width - percentWidth, 0, percentWidth, Height), Ink,
+                TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
         protected override void Dispose(bool disposing)
         {
@@ -619,7 +731,7 @@ internal static class InstallFiles
         using (var guard = OpenAsusGuard())
         try
         {
-            progress(10, "Проверяем файлы и папку установки…");
+            progress(10, "Проверяем папку установки…");
             if (String.IsNullOrWhiteSpace(selected) || !Path.IsPathRooted(selected.Trim()))
                 return "Укажите полный путь к папке установки.";
             directory = Path.GetFullPath(selected.Trim()).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -638,6 +750,7 @@ internal static class InstallFiles
             string executable = Path.Combine(directory, Program);
             previous = existing != null ? executable :
                 File.Exists(Path.Combine(Legacy, "luma-managed-install.txt")) && File.Exists(Path.Combine(Legacy, "Luma.exe")) ? Path.Combine(Legacy, "Luma.exe") : null;
+            progress(20, "Проверяем пакет…");
             using (var archive = OpenPackage())
             {
                 foreach (string name in PackageFiles) Entry(archive, name);
@@ -648,12 +761,15 @@ internal static class InstallFiles
                 bool copyCamera = (cameras || HasCameras(existing)) && (copyCore || !HasCameras(existing));
                 bool copyVpn = (vpn || HasVpn(existing)) && (copyCore || !HasVpn(existing));
                 if (!copyCore && !copyCamera && !copyVpn) return null;
-                progress(25, "Подготавливаем обновление…");
-                if (previous != null) restart = StopPrevious(previous);
+                if (previous != null)
+                {
+                    progress(28, "Закрываем предыдущую версию…");
+                    restart = StopPrevious(previous);
+                }
                 backup = Path.Combine(Path.GetTempPath(), "ModeTapper-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(backup);
                 CreateTextIfMissing(directory, Marker, "ModeTapper managed installation", changed);
-                progress(46, "Копируем программу и компоненты…");
+                progress(46, "Распаковываем и устанавливаем…");
                 if (copyCore)
                     foreach (string name in CoreFiles) Copy(Entry(archive, name), directory, name, backup, changed);
                 if (copyCamera) Copy(Entry(archive, Camera), directory, Camera, backup, changed);
@@ -667,10 +783,10 @@ internal static class InstallFiles
                     if (!existingRules) CreateTextIfMissing(directory, @"vpn\disabled.flag", "", changed);
                 }
             }
-            progress(74, "Добавляем ModeTapper в меню «Пуск»…");
+            progress(74, "Настраиваем ярлыки…");
             RegisterShortcuts(executable);
             using (var key = Registry.CurrentUser.CreateSubKey(AppKey)) key.SetValue("InstallLocation", directory);
-            progress(92, "Запускаем ModeTapper…");
+            progress(92, "Запускаем приложение…");
             int pid = Start(executable, "--background");
             if (guard != null) WaitForTray(directory, pid);
             return null;
@@ -826,27 +942,48 @@ internal static class InstallFiles
 
     static void RegisterShortcuts(string executable)
     {
-        dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));
-        try
-        {
-            string programs = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
-            string startup = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
-            Shortcut(shell, Path.Combine(programs, "ModeTapper.lnk"), executable, "--side-panel");
-            if (!HasStartupTask(executable)) Shortcut(shell, Path.Combine(startup, "ModeTapper.lnk"), executable, "--background");
-        }
-        finally { Marshal.ReleaseComObject(shell); }
+        string programs = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
+        string startup = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
+        Shortcut(Path.Combine(programs, "ModeTapper.lnk"), executable, "--side-panel");
+        if (!HasStartupTask(executable)) Shortcut(Path.Combine(startup, "ModeTapper.lnk"), executable, "--background");
     }
 
-    static void Shortcut(dynamic shell, string path, string executable, string arguments)
+    [ComImport, Guid("00021401-0000-0000-C000-000000000046")]
+    class ShellLink { }
+
+    [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IShellLink
     {
-        dynamic link = shell.CreateShortcut(path);
+        void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int length, IntPtr findData, uint flags);
+        void GetIDList(out IntPtr list);
+        void SetIDList(IntPtr list);
+        void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder name, int length);
+        void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string name);
+        void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder directory, int length);
+        void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string directory);
+        void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder arguments, int length);
+        void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string arguments);
+        void GetHotkey(out ushort hotkey);
+        void SetHotkey(ushort hotkey);
+        void GetShowCmd(out int command);
+        void SetShowCmd(int command);
+        void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder icon, int length, out int index);
+        void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string icon, int index);
+        void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string path, uint reserved);
+        void Resolve(IntPtr window, uint flags);
+        void SetPath([MarshalAs(UnmanagedType.LPWStr)] string path);
+    }
+
+    static void Shortcut(string path, string executable, string arguments)
+    {
+        var link = (IShellLink)new ShellLink();
         try
         {
-            link.TargetPath = executable;
-            link.Arguments = arguments;
-            link.WorkingDirectory = Path.GetDirectoryName(executable);
-            link.Description = "ModeTapper";
-            link.Save();
+            link.SetPath(executable);
+            link.SetArguments(arguments);
+            link.SetWorkingDirectory(Path.GetDirectoryName(executable));
+            link.SetDescription("ModeTapper");
+            ((IPersistFile)link).Save(path, true);
         }
         finally { Marshal.ReleaseComObject(link); }
     }

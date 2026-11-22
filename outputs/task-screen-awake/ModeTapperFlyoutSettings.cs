@@ -197,7 +197,7 @@ internal sealed partial class LumaFlyout
         FillRound(g,product,surface,13);
         using(var brand=new Font("Segoe UI Semibold",25*scale,FontStyle.Regular,GraphicsUnit.Pixel))
             TextAt(g,"ModeTapper",brand,text,SheetRect(39,502,278,37),TextFormatFlags.HorizontalCenter);
-        TextAt(g,Translate("Версия")+" "+typeof(LumaFlyout).Assembly.GetName().Version.ToString(3),button,muted,
+        TextAt(g,Translate("Версия")+" "+ModeTapperVersion.Display(typeof(LumaFlyout).Assembly.GetName().Version),button,muted,
             SheetRect(39,538,278,22),TextFormatFlags.HorizontalCenter);
         SettingsButton(g,Item.Update,updates.Button,true,true);
         if(updates.ManualAvailable)SettingsButton(g,Item.ManualDownload,"Скачать вручную");

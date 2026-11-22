@@ -50,7 +50,7 @@ internal sealed class ModeTapperUpdates : IDisposable
                 return;
             }
 
-            string next = available.Version.ToString(3);
+            string next = ModeTapperVersion.Display(available.Version);
             SetStatus("Доступна версия " + next + ".", "Version " + next + " is available.");
         }
         catch (Exception ex) {
@@ -110,12 +110,10 @@ internal sealed class ModeTapperUpdates : IDisposable
     {
         var release = new JavaScriptSerializer { MaxJsonLength = 256 * 1024 }.Deserialize<Release>(json);
         if (release == null || release.draft || release.prerelease) return null;
-        Version parsed;
+        Version version;
         string tag = release.tag_name;
-        if (String.IsNullOrEmpty(tag) || tag[0] != 'v' || !Version.TryParse(tag.Substring(1), out parsed) ||
-            parsed.Build < 0 || parsed.Revision != -1 || tag != "v" + parsed.ToString(3))
+        if (!ModeTapperVersion.TryReadTag(tag, out version))
             throw new InvalidDataException("Не удалось прочитать версию релиза.");
-        var version = new Version(parsed.Major, parsed.Minor, parsed.Build, 0);
         if (version <= current) return null;
         const string name = "ModeTapper.exe";
         if (release.assets == null || !release.assets.Any(asset => asset != null && asset.name == name && asset.size > 0))

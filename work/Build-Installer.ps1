@@ -37,8 +37,15 @@ try {
     New-Item -ItemType Directory -Path $folder -Force | Out-Null
     $target = Join-Path $folder 'ModeTapper.exe'
     $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-    & $compiler /nologo /optimize+ /target:winexe /platform:x64 '/reference:System.Windows.Forms.dll' '/reference:System.Drawing.dll' '/reference:Accessibility.dll' '/reference:Microsoft.CSharp.dll' '/reference:System.IO.Compression.dll' '/reference:System.IO.Compression.FileSystem.dll' ("/win32manifest:"+(Join-Path $root "$source/ModeTapper.manifest")) ("/win32icon:"+(Join-Path $root "$source/ModeTapper.ico")) ("/resource:$payload,ModeTapper.Payload") ("/out:"+$target) (Join-Path $PSScriptRoot 'ModeTapperSetup.cs')
+    & $compiler /nologo /optimize+ /target:winexe /platform:x64 '/reference:System.Windows.Forms.dll' '/reference:System.Drawing.dll' '/reference:Accessibility.dll' '/reference:Microsoft.CSharp.dll' '/reference:System.IO.Compression.dll' '/reference:System.IO.Compression.FileSystem.dll' ("/win32manifest:"+(Join-Path $root "$source/ModeTapper.manifest")) ("/win32icon:"+(Join-Path $root "$source/ModeTapper.ico")) ("/resource:$payload,ModeTapper.Payload") ("/out:"+$target) (Join-Path $PSScriptRoot 'ModeTapperSetup.cs') (Join-Path $root "$source/ModeTapperVersion.cs")
     if ($LASTEXITCODE -ne 0) { throw 'Сборка установщика завершилась ошибкой' }
+    $packageVersion = [Reflection.AssemblyName]::GetAssemblyName($target).Version
+    $applicationVersion = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $PSScriptRoot 'ModeTapper.exe')).Version
+    $cameraVersion = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $PSScriptRoot 'ModeTapper-camera-control.exe')).Version
+    if ($packageVersion -ne $applicationVersion -or $packageVersion -ne $cameraVersion -or
+        $packageVersion.Minor -gt 9 -or $packageVersion.Build -gt 9 -or $packageVersion.Revision -ne 0) {
+        throw 'Проверьте единый номер версии установщика и компонентов. Второй и третий разряды могут быть от 0 до 9.'
+    }
     if (!$BuildOnly) {
         $test = Start-Process -FilePath $target -ArgumentList '--verify-package' -WindowStyle Hidden -PassThru -Wait
         if ($test.ExitCode -ne 0) { throw 'Проверка содержимого установщика завершилась ошибкой' }
