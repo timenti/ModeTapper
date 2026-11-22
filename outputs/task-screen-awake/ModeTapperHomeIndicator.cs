@@ -94,7 +94,6 @@ internal sealed class PillGesture {
  }
 }
 internal sealed class HomeIndicator : NativeWindow,IDisposable {
- [DllImport("user32.dll")]static extern int GetSystemMetrics(int metric);
  [DllImport("user32.dll")]static extern uint GetDpiForSystem();
  readonly string folder;readonly Control dispatcher;readonly AppCarousel carousel=new AppCarousel();readonly PillGesture pillGesture=new PillGesture();readonly JavaScriptSerializer json=new JavaScriptSerializer();
  readonly BottomPairGesture twoFingerOverview=new BottomPairGesture();
@@ -148,7 +147,7 @@ internal sealed class HomeIndicator : NativeWindow,IDisposable {
  }
  internal void SetRawPadScroll(bool enabled){
   carousel.UseRawPadScroll=enabled;
-  if(!enabled&&carousel.MouseInputEnabled)FinishOverviewContact(true);
+  if(!enabled&&!carousel.RawScreenTouch)FinishOverviewContact(true);
  }
  internal void DragOverviewFromPad(PadSlidePhase phase,double up,double padHeight){
   if(phase!=PadSlidePhase.Move){
@@ -162,7 +161,7 @@ internal sealed class HomeIndicator : NativeWindow,IDisposable {
   if(pairOpening)carousel.MoveOverviewDrag(progress);
  }
  internal bool ScrollFromPad(TouchFrame frame){
-  if(!carousel.MouseInputEnabled||!carousel.Overview&&overviewContact==OverviewContact.None)return false;
+  if(touching||!carousel.Overview&&overviewContact==OverviewContact.None)return false;
   double x=frame.Width>0?frame.CenterX*bounds.Width*.62/frame.Width:0;
   double y=frame.Height>0?frame.CenterY*OverviewTravel/(frame.Height*.40):0;
   return TrackOverviewContact(frame,x,y);
@@ -237,7 +236,7 @@ internal sealed class HomeIndicator : NativeWindow,IDisposable {
   UpdateScreenReader(Active);
  }
  void UpdateScreenReader(bool forGestures){
-  if(!forGestures&&!observingPanelTouch&&touchCaption==null){
+  if(!ModeTapperDeviceSupport.HasTouchScreen()||!forGestures&&!observingPanelTouch&&touchCaption==null){
    if(screen!=null){screen.Dispose();screen=null;}
    panelContactDown=false;
    return;
@@ -249,10 +248,12 @@ internal sealed class HomeIndicator : NativeWindow,IDisposable {
    screen.Failed+=message=>Post(()=>{Error=message;carousel.CancelImmediate();WriteStatus();});
   }catch(Exception ex){Error=ex.Message;}
  }
+ internal void RefreshCapabilities(){Refresh();}
  void Refresh(){
   if(ending)return;
-  bool should=(Enabled||EdgesEnabled)&&GetSystemMetrics(0x2003)==0;
-  var display=Screen.PrimaryScreen;
+  bool should=(Enabled||EdgesEnabled)&&ModeTapperDeviceSupport.HasTouchScreen();
+  var display=should?ModeTapperDeviceSupport.TouchDisplay():Screen.PrimaryScreen;
+  carousel.TargetDisplay=display;
   Rectangle next=display.Bounds;
   bool geometry=next!=bounds;
   bounds=next;scale=GetDpiForSystem()/96.0;
@@ -261,11 +262,12 @@ internal sealed class HomeIndicator : NativeWindow,IDisposable {
   if(geometry||Active&&!should){startGuard.Stop();carousel.CancelImmediate();twoFingerOverview.Reset();overviewContact=OverviewContact.None;pairOpening=false;route=Route.None;touching=false;if(edges!=null)edges.Reset();if(touchCaption!=null)touchCaption.Cancel();}
   if(geometry)carousel.PrepareBackdrop();
   Error="";UpdateScreenReader(should);
-  if(!should){if(edges!=null){edges.Dispose();edges=null;}}else{
-   if(EdgesEnabled&&edges==null){edges=new TabletEdgeControls(folder,dispatcher);edges.Changed+=()=>{if(edges==null)return;Error=edges.Error;statusTimer.Stop();statusTimer.Start();};}else if(!EdgesEnabled&&edges!=null){edges.Dispose();edges=null;}
+  if(edges!=null&&(!should||geometry)){edges.Dispose();edges=null;}
+  if(should){
+   if(EdgesEnabled&&edges==null){edges=new TabletEdgeControls(folder,dispatcher,display);edges.Changed+=()=>{if(edges==null)return;Error=edges.Error;statusTimer.Stop();statusTimer.Start();};}else if(!EdgesEnabled&&edges!=null){edges.Dispose();edges=null;}
   }
-  Active=should&&screen!=null;
-  carousel.MouseInputEnabled=!Active;
+  Active=should&&screen!=null&&screen.DeviceCount>0;
+  carousel.RawScreenTouch=Active;
   try{RefreshTabletTapGuard();}catch(Exception ex){Error=ex.Message;}
   WriteStatus();if(Changed!=null)Changed();
  }

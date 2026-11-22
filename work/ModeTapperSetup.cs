@@ -15,8 +15,8 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle("Установка ModeTapper")]
 [assembly: AssemblyProduct("ModeTapper")]
 [assembly: AssemblyCompany("TIMENTI")]
-[assembly: AssemblyVersion("1.24.19.0")]
-[assembly: AssemblyFileVersion("1.24.19.0")]
+[assembly: AssemblyVersion("1.24.20.0")]
+[assembly: AssemblyFileVersion("1.24.20.0")]
 
 internal static class ModeTapperSetup
 {

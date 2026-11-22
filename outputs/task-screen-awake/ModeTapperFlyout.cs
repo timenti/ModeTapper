@@ -28,9 +28,9 @@ internal sealed partial class LumaFlyout : Form {
         [MarshalAs(UnmanagedType.ByValTStr,SizeConst=32)]public string Device;
     }
 
-    enum Item { Always, Tasks, ScreenOff, Rotation, Economy, Balance, Maximum, Armoury, Silent, Performance, Turbo,
-        Routing, Sites, Happ, Touchpad, Home, Edges, Animations, Zoom, CodexWidget, TasksWidget, ClockWidget, CalendarWidget, CameraOpen, CameraBlock,
-        Settings, CloseSettings, ThemeSystem, ThemeLight, ThemeDark, LanguageRu, LanguageEn,
+    enum Item { Always, Tasks, ScreenOff, Rotation, Economy, Balance, Maximum, Armoury, Silent, Performance, Turbo, CoolingPassive, CoolingActive,
+        Routing, Sites, Happ, Touchpad, Home, Edges, Animations, Zoom, Overview, CodexWidget, TasksWidget, ClockWidget, CalendarWidget, CameraOpen, CameraBlock,
+        Settings, CloseSettings, Shortcut, ThemeSystem, ThemeLight, ThemeDark, LanguageRu, LanguageEn,
         ShowScreen, ShowPower, ShowCooling, ShowVpn, ShowGestures, ShowWidgets, ShowCameras, Update, ManualDownload }
     enum IconKind { Screen, Gauge, Fan, Shield, Gestures, Touchpad, Home, Edges, Plug, Battery, Animations, Zoom, Widgets, Camera }
 
@@ -52,7 +52,7 @@ internal sealed partial class LumaFlyout : Form {
 
     readonly Func<int> getMode;
     readonly Func<PowerPreset> getPower;
-    readonly Func<int?> getCooling;
+    readonly Func<int?> getCooling,getWindowsCooling;
     readonly Func<AsusCoolingAvailability> getCoolingAvailability;
     readonly Func<bool> isPaused,getVpn,getVpnWaiting,getTouchpad,getHome,getEdges,getAnimations,getZoom;
     readonly Func<DesktopWidgetKind,bool> getWidget;
@@ -65,8 +65,9 @@ internal sealed partial class LumaFlyout : Form {
     readonly Action<int> setMode;
     readonly Action<PowerPreset> setPower;
     readonly Action<AsusCoolingPreset> setCooling;
+    readonly Action<bool> setWindowsCooling;
     readonly Action openArmoury,quit,resume,toggleVpn,editSites,openHapp,toggleTouchpad,toggleHome,toggleEdges,toggleAnimations,toggleZoom;
-    readonly bool showCooling,showVpn,showCameras;
+    readonly bool showVpn,showCameras;
     readonly ModeTapperUpdates updates;
     readonly ToolTip tips=new ToolTip{InitialDelay=550,ReshowDelay=200,AutoPopDelay=5000};
     readonly MouseHookProc outsidePress;
@@ -86,14 +87,17 @@ internal sealed partial class LumaFlyout : Form {
     int slideDuration,displayRotation,placementChecks;
 
     internal LumaFlyout(Func<int> mode,Action<int> screenMode,Func<PowerPreset> power,Action<PowerPreset> powerMode,
-        bool coolingSupported,Func<AsusCoolingAvailability> coolingAvailability,Func<int?> cooling,Action<AsusCoolingPreset> coolingMode,Action armoury,
+        Func<AsusCoolingAvailability> coolingAvailability,Func<int?> cooling,Action<AsusCoolingPreset> coolingMode,
+        Func<int?> windowsCooling,Action<bool> windowsCoolingMode,Action armoury,
         Action exit,bool vpnInstalled,Func<bool> vpn,Func<string> vpnError,Func<bool> vpnWaiting,Action vpnToggle,Action sites,Action happ,
         Func<bool> touchpad,Action touchpadToggle,Func<bool> home,Action homeToggle,Func<bool> edges,Action edgesToggle,
         Func<bool> animations,Action animationsToggle,Func<bool> zoom,Action zoomToggle,
         Func<DesktopWidgetKind,bool> widget,Action<DesktopWidgetKind> widgetToggle,Func<bool> paused,Action resumeLuma,
-        Func<bool?> rotation,Action rotationToggle,bool camerasInstalled,Func<CameraState> camera,Func<bool> busy,Func<bool> locked,Action cameraOpen,Action cameraToggle,ModeTapperUpdates updates,ModeTapperPreferences preferences){
+        Func<bool?> rotation,Action rotationToggle,bool camerasInstalled,Func<CameraState> camera,Func<bool> busy,Func<bool> locked,Action cameraOpen,Action cameraToggle,ModeTapperUpdates updates,ModeTapperPreferences preferences,
+        ModeTapperDeviceSupport hardware,Func<PanelShortcut,bool> saveShortcut,Func<bool> shortcutActive,Func<PowerPreset,bool> powerAvailable,Action openOverview){
         getMode=mode;setMode=screenMode;getPower=power;setPower=powerMode;
-        showCooling=coolingSupported;getCoolingAvailability=coolingAvailability;getCooling=cooling;setCooling=coolingMode;openArmoury=armoury;
+        getCoolingAvailability=coolingAvailability;getCooling=cooling;setCooling=coolingMode;openArmoury=armoury;
+        getWindowsCooling=windowsCooling;setWindowsCooling=windowsCoolingMode;
         showVpn=vpnInstalled;showCameras=camerasInstalled;
         getVpn=vpn;getVpnError=vpnError;getVpnWaiting=vpnWaiting;toggleVpn=vpnToggle;editSites=sites;openHapp=happ;
         getTouchpad=touchpad;toggleTouchpad=touchpadToggle;getHome=home;toggleHome=homeToggle;getEdges=edges;toggleEdges=edgesToggle;
@@ -103,6 +107,8 @@ internal sealed partial class LumaFlyout : Form {
         getRotation=rotation;toggleRotation=rotationToggle;getCamera=camera;cameraBusy=busy;cameraLocked=locked;
         openCamera=cameraOpen;toggleCamera=cameraToggle;
         this.updates=updates;this.preferences=preferences;
+        this.hardware=hardware;this.saveShortcut=saveShortcut;this.shortcutActive=shortcutActive;
+        this.powerAvailable=powerAvailable;this.openOverview=openOverview;
         quit=exit;isPaused=paused;resume=resumeLuma;
         outsidePress=OnMouseHook;
         Text="ModeTapper";FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=false;StartPosition=FormStartPosition.Manual;
@@ -339,12 +345,14 @@ internal sealed partial class LumaFlyout : Form {
         if(item<=Item.Maximum)return Tile(index-(int)Item.Economy,PowerY+31);
         if(item==Item.Armoury)return R(256,CoolingY,80,25);
         if(item<=Item.Turbo)return Tile(index-(int)Item.Silent,CoolingY+31);
+        if(item<=Item.CoolingActive)return R(item==Item.CoolingPassive?ContentInset:182,CoolingY+31,154,54);
         if(item==Item.Routing)return R(ContentInset,VpnY+31,ContentWidth,34);
         if(item<=Item.Happ)return R(item==Item.Sites?ContentInset:182,VpnY+73,154,30);
         if(item>=Item.CodexWidget&&item<=Item.CalendarWidget){
             int slot=index-(int)Item.CodexWidget;
             return R(ContentInset+(slot%2)*162,WidgetsY+31+38*(slot/2),154,33);
         }
+        if(item==Item.Overview)return R(ContentInset,GesturesY+85,ContentWidth,31);
         if(item>=Item.Settings)return SettingsBounds(item);
         if(item>=Item.CameraOpen)return R(item==Item.CameraOpen?ContentInset:182,CameraY+31,154,33);
         return R(ContentInset+64*(index-(int)Item.Touchpad),GesturesY+26,60,54);
@@ -357,14 +365,21 @@ internal sealed partial class LumaFlyout : Form {
         if(settingsOpen||settingsProgress>0)return false;
         if(item<=Item.Rotation)return SectionVisible(PanelSection.Screen);
         if(item<=Item.Maximum)return SectionVisible(PanelSection.Power);
-        if(item<=Item.Turbo)return SectionVisible(PanelSection.Cooling);
+        if(item<=Item.CoolingActive){
+            if(!SectionVisible(PanelSection.Cooling))return false;
+            if(item<=Item.Turbo)return UsesAsusCooling&&(item!=Item.Armoury||hardware.ArmouryInstalled);
+            return !UsesAsusCooling&&getWindowsCooling().HasValue;
+        }
         if(item<=Item.Happ)return SectionVisible(PanelSection.Vpn);
-        if(item<=Item.Zoom)return SectionVisible(PanelSection.Gestures);
+        if(item<=Item.Overview)return SectionVisible(PanelSection.Gestures);
         if(item<=Item.CalendarWidget)return SectionVisible(PanelSection.Widgets);
         return SectionVisible(PanelSection.Cameras);
     }
     bool IsEnabled(Item item){
         if(item==Item.Rotation)return getRotation().HasValue;
+        if(item>=Item.Economy&&item<=Item.Maximum)return powerAvailable((PowerPreset)(item-Item.Economy));
+        if(item==Item.Touchpad||item==Item.Zoom)return hardware.Touchpad;
+        if(item==Item.Home||item==Item.Edges)return hardware.TouchScreen;
         if(item==Item.Update)return updates.CanAct;
         if(item>=Item.ShowScreen&&item<=Item.ShowCameras)return SectionAvailable((PanelSection)(item-Item.ShowScreen));
         if(item==Item.CameraOpen)return !cameraBusy()&&(getCamera()==CameraState.Available||getCamera()==CameraState.Mixed);
@@ -505,6 +520,7 @@ internal sealed partial class LumaFlyout : Form {
     void Card(Graphics g,Item item,string label,IconKind icon,bool selected,Color tint,int dial=1){
         var r=BoundsOf(item);
         bool enabled=IsEnabled(item);
+        selected=selected&&enabled;
         bool over=hover==(int)item&&enabled;
         bool gesture=item>=Item.Touchpad&&item<=Item.Zoom;
         if(selected||over&&!gesture)FillRound(g,r,over||lightTheme?hoverSurface:Color.FromArgb(38,38,38),6);
@@ -567,25 +583,36 @@ internal sealed partial class LumaFlyout : Form {
             Card(g,Item.Economy+i,powerLabels[i],IconKind.Gauge,selected,i==0?amber:accent,i);
         }
     }
+    bool UsesAsusCooling {get{return getCoolingAvailability()!=AsusCoolingAvailability.DriverUnavailable;}}
     void DrawCooling(Graphics g){
         Divider(g,CoolingY-5);
         Section(g,IconKind.Fan,"Охлаждение",CoolingY);
-        var link=BoundsOf(Item.Armoury);
-        if(hover==(int)Item.Armoury)FillRound(g,link,hoverSurface,6);
-        DrawKeyboardFocus(g,(int)Item.Armoury,link);
-        TextAt(g,"Armoury Crate",small,accent,link,TextFormatFlags.HorizontalCenter);
-        int width=TextRenderer.MeasureText(g,"Armoury Crate",small,Size.Empty,TextFormatFlags.NoPadding|TextFormatFlags.SingleLine).Width;
-        int start=link.Left+(link.Width-width)/2;
-        using(var pen=new Pen(muted,Math.Max(1,S(.5f))))g.DrawLine(pen,start,link.Bottom-S(5),start+width,link.Bottom-S(5));
+        if(!UsesAsusCooling){
+            TextAt(g,"Политика Windows",small,muted,R(211,CoolingY,125,25),TextFormatFlags.Right);
+            int? policy=getWindowsCooling();
+            Card(g,Item.CoolingPassive,"Пассивное",IconKind.Fan,policy==0,accent,0);
+            Card(g,Item.CoolingActive,"Активное",IconKind.Fan,policy==1,accent,2);
+            return;
+        }
+        if(hardware.ArmouryInstalled){
+            var link=BoundsOf(Item.Armoury);
+            if(hover==(int)Item.Armoury)FillRound(g,link,hoverSurface,6);
+            DrawKeyboardFocus(g,(int)Item.Armoury,link);
+            TextAt(g,"Armoury Crate",small,accent,link,TextFormatFlags.HorizontalCenter);
+            int width=TextRenderer.MeasureText(g,"Armoury Crate",small,Size.Empty,TextFormatFlags.NoPadding|TextFormatFlags.SingleLine).Width;
+            int start=link.Left+(link.Width-width)/2;
+            using(var pen=new Pen(muted,Math.Max(1,S(.5f))))g.DrawLine(pen,start,link.Bottom-S(5),start+width,link.Bottom-S(5));
+        }else TextAt(g,"Драйвер ASUS",small,muted,R(211,CoolingY,125,25),TextFormatFlags.Right);
         int? current=getCooling();
         for(int i=0;i<fanPresets.Length;i++)
-            Card(g,Item.Silent+i,fanLabels[i],IconKind.Fan,current==(int)fanPresets[i],accent,i);
+            Card(g,Item.Silent+i,i==1&&!hardware.AsusFlow?"Баланс":fanLabels[i],IconKind.Fan,current==(int)fanPresets[i],accent,i);
         string notice=CoolingNotice();
         if(notice!=null)TextAt(g,notice,small,amber,R(ContentInset,CoolingY+86,ContentWidth,20));
     }
     string CoolingNotice(){
         var state=getCoolingAvailability();
-        if(state==AsusCoolingAvailability.LockedByAsus)return "Профили заблокированы ASUS. Откройте Armoury Crate.";
+        if(state==AsusCoolingAvailability.LockedByAsus)return hardware.ArmouryInstalled?
+            "Профили заблокированы ASUS. Откройте Armoury Crate.":"ASUS ограничивает охлаждение в этом положении.";
         if(state==AsusCoolingAvailability.DriverUnavailable)return "Управление охлаждением ASUS недоступно.";
         if(state==AsusCoolingAvailability.ReadyWithPostureMismatch)return "Armoury Crate: неверный режим. Доступен ручной выбор.";
         return PowerModes.OnAC?null:"Турбо доступен от сети.";
@@ -614,6 +641,7 @@ internal sealed partial class LumaFlyout : Form {
         bool[] enabled={getTouchpad(),getHome(),getEdges(),getAnimations(),getZoom()};
         for(int i=0;i<gestureLabels.Length;i++)
             Card(g,Item.Touchpad+i,gestureLabels[i],gestureIcons[i],enabled[i],accent);
+        ActionRow(g,Item.Overview,"Карусель окон");
     }
     void DrawWidgets(Graphics g){
         Divider(g,WidgetsY-5);
@@ -673,12 +701,18 @@ internal sealed partial class LumaFlyout : Form {
 
     string Hint(Item item){
         if(item==Item.Settings)return "Настройки";
+        if(item>=Item.ShowScreen&&item<=Item.ShowCameras)return SectionProblem((PanelSection)(item-Item.ShowScreen));
+        if((item==Item.Touchpad||item==Item.Zoom)&&!hardware.Touchpad)return "Нет Precision Touchpad";
+        if((item==Item.Home||item==Item.Edges)&&!hardware.TouchScreen)return "Нет сенсорного экрана";
+        if(item>=Item.Economy&&item<=Item.Maximum&&!IsEnabled(item))return "Схема питания недоступна";
         if(item==Item.Rotation&&!getRotation().HasValue)return "Датчик поворота Windows недоступен";
         if(item==Item.CameraBlock)return "Отключает камеры в Windows, включая камеру входа по лицу";
         if(item>=Item.Silent&&item<=Item.Turbo&&!AsusCooling.CanSelect(getCoolingAvailability()))return CoolingNotice();
         if(item==Item.Turbo&&!PowerModes.OnAC)return "Турбо доступен от сети";
         if(item>=Item.Silent&&item<=Item.Turbo&&getCooling()==(int)fanPresets[(int)item-(int)Item.Silent])return "Последний профиль, применённый ModeTapper";
-        if(item==Item.Performance)return "Производительный профиль ASUS";
+        if(item==Item.Performance)return hardware.AsusFlow?"Производительный профиль ASUS":"Сбалансированный профиль ASUS";
+        if(item==Item.CoolingPassive)return "Windows сначала снижает нагрузку";
+        if(item==Item.CoolingActive)return "Windows сначала задействует вентиляторы";
         if(item==Item.Balance)return "От сети — максимум, от батареи — баланс";
         if(item==Item.Economy)return "Штатное энергосбережение Windows и отключение турбоускорения";
         if(item==Item.Touchpad)return "Умный тачпад";
@@ -714,6 +748,7 @@ internal sealed partial class LumaFlyout : Form {
         else if(item<=Item.Maximum)setPower((PowerPreset)(index-(int)Item.Economy));
         else if(item==Item.Armoury){Hide();openArmoury();return;}
         else if(item<=Item.Turbo)setCooling(fanPresets[index-(int)Item.Silent]);
+        else if(item<=Item.CoolingActive)setWindowsCooling(item==Item.CoolingActive);
         else switch(item){
             case Item.Routing:toggleVpn();break;
             case Item.Sites:Hide();editSites();return;
@@ -723,6 +758,7 @@ internal sealed partial class LumaFlyout : Form {
             case Item.Edges:toggleEdges();break;
             case Item.Animations:toggleAnimations();break;
             case Item.Zoom:toggleZoom();break;
+            case Item.Overview:openOverview();return;
             case Item.CodexWidget:case Item.TasksWidget:case Item.ClockWidget:case Item.CalendarWidget:
                 toggleWidget((DesktopWidgetKind)(index-(int)Item.CodexWidget));break;
             case Item.CameraOpen:Hide();openCamera();return;
@@ -731,8 +767,13 @@ internal sealed partial class LumaFlyout : Form {
         Invalidate();
     }
     protected override void OnMouseUp(MouseEventArgs e){base.OnMouseUp(e);if(e.Button==MouseButtons.Left)InvokeItem(Hit(e.Location));}
+    protected override bool ProcessCmdKey(ref Message message,Keys keyData){
+        if(RecordingShortcut){RecordShortcut(keyData);return true;}
+        return base.ProcessCmdKey(ref message,keyData);
+    }
     protected override void OnKeyDown(KeyEventArgs e){
         base.OnKeyDown(e);
+        if(RecordingShortcut){RecordShortcut(e.KeyData);e.Handled=true;e.SuppressKeyPress=true;return;}
         if(e.KeyCode==Keys.Escape){if(settingsOpen)ToggleSettings();else Dismiss();e.Handled=true;return;}
         if(e.KeyCode==Keys.Enter||e.KeyCode==Keys.Space){InvokeItem(keyboardItem>=0?keyboardItem:hover);e.Handled=true;return;}
         if(e.KeyCode!=Keys.Down&&e.KeyCode!=Keys.Up&&e.KeyCode!=Keys.Tab)return;
@@ -744,7 +785,8 @@ internal sealed partial class LumaFlyout : Form {
         Invalidate();e.Handled=true;
     }
     internal void SavePreview(string path,bool settings=false){
-        if(settings){settingsOpen=true;settingsProgress=1;}
+        settingsOpen=settings;
+        settingsProgress=settings?1:0;
         Fit(Screen.PrimaryScreen.WorkingArea);
         using(var bitmap=new Bitmap(Width,Height)){
             DrawToBitmap(bitmap,new Rectangle(Point.Empty,Size));bitmap.Save(path,ImageFormat.Png);

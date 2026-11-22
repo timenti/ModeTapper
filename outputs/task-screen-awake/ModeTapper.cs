@@ -13,8 +13,8 @@ using System.Windows.Forms;
 [assembly:System.Reflection.AssemblyProduct("ModeTapper")]
 [assembly:System.Reflection.AssemblyDescription("Экран, питание и выборочные маршруты VPN")]
 [assembly:System.Reflection.AssemblyCompany("TIMENTI")]
-[assembly:System.Reflection.AssemblyVersion("1.24.19.0")]
-[assembly:System.Reflection.AssemblyFileVersion("1.24.19.0")]
+[assembly:System.Reflection.AssemblyVersion("1.24.20.0")]
+[assembly:System.Reflection.AssemblyFileVersion("1.24.20.0")]
 
 internal static class PowerModes {
     internal static readonly Guid Best=new Guid("ded574b5-45a0-4f42-8737-46345c09c238");
@@ -28,6 +28,11 @@ internal static class PowerModes {
     internal static Guid Current() { Guid g;uint result=OnAC?PowerGetUserConfiguredACPowerMode(out g):PowerGetUserConfiguredDCPowerMode(out g);Check(result);return g; }
     internal static void Check(uint result) {if(result!=0)throw new System.ComponentModel.Win32Exception((int)result);}
     internal static string ReadSide(bool ac){Guid prior;Check(ac?PowerGetUserConfiguredACPowerMode(out prior):PowerGetUserConfiguredDCPowerMode(out prior));return prior.ToString();}
+    internal static bool OverlayAvailable(){
+        Guid mode;
+        try{return PowerGetUserConfiguredACPowerMode(out mode)==0&&PowerGetUserConfiguredDCPowerMode(out mode)==0;}
+        catch(EntryPointNotFoundException){return false;}
+    }
     internal static void WriteSide(bool ac,string value){Guid mode=new Guid(value);Check(ac?PowerSetUserConfiguredACPowerMode(ref mode):PowerSetUserConfiguredDCPowerMode(ref mode));}
     internal static void SetSide(bool ac,Guid value){Safety.Change(ac?"power.ac":"power.dc",()=>ReadSide(ac),text=>WriteSide(ac,text),value.ToString());}
     internal static void SetCurrent(Guid g) {SetSide(OnAC,g);}
@@ -178,6 +183,11 @@ internal sealed class TrayApp : ApplicationContext {
     readonly string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),".codex","sessions");
     readonly string folder = AppDomain.CurrentDomain.BaseDirectory;
     readonly ModeTapperUpdates updates;
+    readonly ModeTapperDeviceSupport hardware;
+    readonly ModeTapperPreferences preferences;
+    ModeTapperPanelHotkey launcherHotkey;
+    NotifyIcon launcherTray;
+    DateTime hardwareRefresh;
     readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
     readonly System.Windows.Forms.Timer widgetVisibility = new System.Windows.Forms.Timer{Interval=220};
     readonly TaskReader reader = new TaskReader();
@@ -204,24 +214,26 @@ internal sealed class TrayApp : ApplicationContext {
     LidMonitor lid;
     string lidOverride,displayOverride;
     readonly PowerSelection powerSelection=new PowerSelection();
-    readonly bool coolingSupported;
     readonly bool vpnInstalled,camerasInstalled;
     AsusCoolingAvailability coolingAvailability;
     bool? coolingOnAc;
     bool coolingRestorePending;
     AsusCoolingPreset? preferredCooling;
-    int? coolingProfile;
+    int? coolingProfile,windowsCoolingPolicy;
     string error="", lastStatus="";
     DateTime heartbeat=DateTime.MinValue;
-    internal TrayApp(bool preview=false,bool uiTest=false,bool showSidePanel=false) {
+    internal TrayApp(bool preview=false,bool uiTest=false,bool showSidePanel=false,bool desktopPreview=false) {
         int saved;
         try { if(Int32.TryParse(File.ReadAllText(Path.Combine(folder,"mode.txt")),out saved) && saved>=0 && saved<=2) mode=saved; } catch { }
         if(Safety.Safe)mode=2;
         IntPtr handle=dispatcher.Handle;
-        if(!preview&&!Safety.Safe)try{lid=new LidMonitor();}catch(Exception ex){Safety.Audit("lid.monitor",null,null,ex.Message);}
+        hardware=new ModeTapperDeviceSupport(preview,desktopPreview);
+        preferences=new ModeTapperPreferences(folder,preview);
+        if(!preview&&!Safety.Safe&&hardware.LidPresent)try{lid=new LidMonitor();}catch(Exception ex){Safety.Audit("lid.monitor",null,null,ex.Message);}
         string vpnFolder=Path.Combine(folder,"vpn");
-        vpnInstalled=preview||File.Exists(Path.Combine(vpnFolder,"rules.template.pac"));
-        camerasInstalled=preview||File.Exists(Path.Combine(folder,"ModeTapper-camera-control.exe"));
+        vpnInstalled=preview?!desktopPreview:File.Exists(Path.Combine(vpnFolder,"rules.template.pac"));
+        camerasInstalled=preview?!desktopPreview:File.Exists(Path.Combine(folder,"ModeTapper-camera-control.exe"));
+        if(preview&&!desktopPreview)cameraState=CameraState.Available;
         if(!preview&&!Safety.Safe&&vpnInstalled)try{vpn=new VpnController(vpnFolder,dispatcher);}catch(Exception ex){vpnError=ex.Message;}
         if(!preview&&!Safety.Safe){
             codexWidget=new CodexWidget(folder,dispatcher,WidgetAreas);
@@ -230,19 +242,20 @@ internal sealed class TrayApp : ApplicationContext {
             codexWidget.Moved+=desktopIcons.CheckSoon;
             utilityWidgets.Moved+=desktopIcons.CheckSoon;
             home=new HomeIndicator(folder,dispatcher);
-            smartPad=new SmartTouchpad(folder,dispatcher,home,()=>{if(flyout!=null&&flyout.Visible)flyout.Hide();});
+            UpdateTouchpad();
             try {
                 NativeWindowAnimation.Restore();
                 home.AnimationPlus=File.Exists(AnimationPreference)&&File.ReadAllText(AnimationPreference)=="1";
             }catch(Exception ex){Report("animations.start",ex.Message,false);}
         }else if(!preview&&uiTest){home=new HomeIndicator(folder,dispatcher,true);}
-        coolingSupported=preview||AsusCooling.IsSupportedModel();
-        if(preview)coolingAvailability=AsusCoolingAvailability.Ready;
-        coolingProfile=preview?(int?)AsusCoolingPreset.Performance:null;
-        if(!preview&&coolingSupported)preferredCooling=LoadCoolingPreset();
+        if(preview&&hardware.Asus){
+            coolingAvailability=AsusCoolingAvailability.Ready;
+            coolingProfile=(int)AsusCoolingPreset.Performance;
+        }
+        if(!preview&&hardware.Asus)preferredCooling=LoadCoolingPreset();
         updates=new ModeTapperUpdates(folder,preview);
         flyout=new LumaFlyout(()=>mode,SetMode,()=>powerSelection.Current,ChangePower,
-            coolingSupported,()=>coolingAvailability,()=>coolingProfile,ChangeCooling,OpenArmouryCrate,
+            ()=>coolingAvailability,()=>coolingProfile,ChangeCooling,()=>windowsCoolingPolicy,ChangeWindowsCooling,OpenArmouryCrate,
             ()=>ExitThread(),vpnInstalled,()=>preview||(vpn!=null&&vpn.Enabled),()=>vpn==null?vpnError:vpn.Error,()=>vpn!=null&&vpn.Waiting,
             ToggleVpn,EditVpnSites,OpenHapp,()=>preview||(smartPad!=null&&smartPad.Enabled),ToggleTouchpad,
             ()=>preview||(home!=null&&home.Enabled),ToggleHome,()=>preview||(home!=null&&home.EdgesEnabled),ToggleScreenEdges,
@@ -251,11 +264,11 @@ internal sealed class TrayApp : ApplicationContext {
             kind=>preview||WidgetEnabled(kind),ToggleWidget,
             ()=>!preview&&Safety.Safe,ResumeFromMenu,
             ()=>preview?(bool?)false:RotationLock.Current(),ToggleRotation,
-            camerasInstalled,()=>preview?CameraState.Available:cameraState,()=>cameraBusy,()=>cameraLocked,OpenCamera,ToggleCamera,updates,
-            new ModeTapperPreferences(folder,preview));
+            camerasInstalled,()=>cameraState,()=>cameraBusy,()=>cameraLocked,OpenCamera,ToggleCamera,updates,
+            preferences,hardware,shortcut=>preview?SavePreviewShortcut(shortcut):ChangeShortcut(shortcut),
+            ()=>preview||launcherHotkey!=null&&launcherHotkey.Active,preset=>preview||powerSelection.Available(preset),()=>ShowOverview(true));
         updates.Changed+=()=>flyout.Invalidate();
         if(vpn!=null)vpn.Changed+=()=>flyout.Invalidate();
-        if(smartPad!=null)smartPad.Changed+=()=>flyout.Invalidate();
         if(home!=null){
             home.Changed+=()=>flyout.Invalidate();
             flyout.VisibleChanged+=(s,e)=>home.ObservePanelTouch(flyout.Visible);
@@ -267,22 +280,24 @@ internal sealed class TrayApp : ApplicationContext {
             catch(Exception ex){Report("animations.desktop",ex.Message,false);}
         }
         if(preview)return;
+        StartPanelLaunchers();
         WindowsEnergySaver.Observe();
         stopWait=ThreadPool.RegisterWaitForSingleObject(stopEvent,(s,t)=>{try{dispatcher.BeginInvoke(new Action(()=>ExitThread()));}catch(InvalidOperationException){}},null,Timeout.Infinite,false);
         sidePanelEvent=new EventWaitHandle(false,EventResetMode.AutoReset,SidePanelEvent);
         sidePanelWait=ThreadPool.RegisterWaitForSingleObject(sidePanelEvent,(s,t)=>{
             try{dispatcher.BeginInvoke(new Action(ToggleSidePanel));}catch(InvalidOperationException){}
         },null,Timeout.Infinite,false);
-        if(coolingSupported&&!Safety.Safe)try{sideButton=new AsusSideButton(dispatcher,flyout,RefreshPanel,()=>ShowOverview(true));}
+        if(hardware.AsusFlow&&!Safety.Safe)try{sideButton=new AsusSideButton(dispatcher,flyout,RefreshPanel,()=>ShowOverview(true));}
         catch(Exception ex){Safety.Audit("asus.command-center",null,null,ex.Message);}
-        if(coolingSupported&&!Safety.Safe)try{keyboardResume=new KeyboardLightResume(folder);}
+        if(hardware.AsusFlow&&!Safety.Safe)try{keyboardResume=new KeyboardLightResume(folder);}
         catch(Exception ex){Safety.Audit("keyboard.resume",null,null,ex.Message);}
         timer.Interval=5000; timer.Tick+=(s,e)=>Tick();
         widgetVisibility.Tick+=(s,e)=>{
             if(codexWidget!=null)codexWidget.Pulse();
             if(utilityWidgets!=null&&utilityWidgets.Pulse())Tick();
         };
-        if(!Safety.Safe)ApplyPower(LoadPowerPreset(),false);else Tick();
+        var initial=LoadPowerPreset();
+        if(!Safety.Safe&&powerSelection.Available(initial))ApplyPower(initial,false);else Tick();
         timer.Start();
         if(utilityWidgets!=null)widgetVisibility.Start();
         if(showSidePanel)dispatcher.BeginInvoke(new Action(ToggleSidePanel));
@@ -290,6 +305,44 @@ internal sealed class TrayApp : ApplicationContext {
     void ToggleSidePanel(){
         if(flyout.EdgeIsOpen){flyout.Dismiss();return;}
         RefreshPanel();flyout.OpenAtScreenEdge();
+    }
+    void UpdateTouchpad(){
+        if(!hardware.Touchpad){
+            if(smartPad!=null){smartPad.Dispose();smartPad=null;}
+            return;
+        }
+        if(smartPad!=null)return;
+        try{
+            smartPad=new SmartTouchpad(folder,dispatcher,home,()=>{if(flyout!=null&&flyout.Visible)flyout.Hide();});
+            smartPad.Changed+=()=>{if(flyout!=null)flyout.Invalidate();};
+        }catch(Exception ex){Report("touchpad.start",ex.Message,false);}
+    }
+    bool SavePreviewShortcut(PanelShortcut shortcut){
+        if(!shortcut.Valid)return false;
+        preferences.SaveShortcut(shortcut);return true;
+    }
+    bool ChangeShortcut(PanelShortcut shortcut){
+        return launcherHotkey!=null&&launcherHotkey.TryChange(shortcut,()=>preferences.SaveShortcut(shortcut));
+    }
+    void StartPanelLaunchers(){
+        try{
+            launcherHotkey=new ModeTapperPanelHotkey(()=>{if(!flyout.RecordingShortcut)ToggleSidePanel();});
+            launcherHotkey.TryChange(preferences.Shortcut,null);
+        }catch(System.ComponentModel.Win32Exception ex){Report("panel.hotkey",ex.Message,false);}
+        launcherTray=new NotifyIcon{Text="ModeTapper",Icon=Icon.ExtractAssociatedIcon(Application.ExecutablePath)};
+        var menu=new ContextMenuStrip();
+        var open=menu.Items.Add("Открыть ModeTapper",null,(s,e)=>ToggleSidePanel());
+        var overview=menu.Items.Add("Карусель окон",null,(s,e)=>ShowOverview(true));
+        var exit=menu.Items.Add("Выход",null,(s,e)=>ExitThread());
+        menu.Opening+=(s,e)=>{
+            open.Text=preferences.English?"Open ModeTapper":"Открыть ModeTapper";
+            overview.Text=preferences.English?"Window carousel":"Карусель окон";
+            overview.Enabled=home!=null&&!Safety.Safe;
+            exit.Text=preferences.English?"Exit":"Выход";
+        };
+        launcherTray.ContextMenuStrip=menu;
+        launcherTray.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)ToggleSidePanel();};
+        launcherTray.Visible=true;
     }
     void RefreshPanel(){
         RefreshCooling();
@@ -421,9 +474,15 @@ internal sealed class TrayApp : ApplicationContext {
         return null;
     }
     void RefreshCooling(){
-        if(!coolingSupported||Safety.Safe)return;
+        if(Safety.Safe)return;
         bool onAc=PowerModes.OnAC;
-        var availability=AsusCooling.Availability();
+        var availability=hardware.Asus?AsusCooling.Availability():AsusCoolingAvailability.DriverUnavailable;
+        bool hadCooling=coolingAvailability!=AsusCoolingAvailability.DriverUnavailable||windowsCoolingPolicy.HasValue;
+        int? policy=availability==AsusCoolingAvailability.DriverUnavailable?PlanSettings.ReadCoolingPolicy():null;
+        if(windowsCoolingPolicy!=policy){
+            windowsCoolingPolicy=policy;
+            flyout.RefreshCoolingFeedback();
+        }
         if(coolingOnAc!=onAc||coolingAvailability!=availability){
             coolingOnAc=onAc;
             coolingAvailability=availability;
@@ -431,6 +490,8 @@ internal sealed class TrayApp : ApplicationContext {
             coolingRestorePending=preferredCooling.HasValue;
             flyout.RefreshCoolingFeedback();
         }
+        bool hasCooling=availability!=AsusCoolingAvailability.DriverUnavailable||policy.HasValue;
+        if(hadCooling!=hasCooling)flyout.RefreshCapabilities();
         if(availability!=AsusCoolingAvailability.Ready||!coolingRestorePending||
             (!onAc&&preferredCooling==AsusCoolingPreset.Turbo))return;
         coolingRestorePending=false;
@@ -447,6 +508,10 @@ internal sealed class TrayApp : ApplicationContext {
             Safety.Atomic(CoolingPreference,preset.ToString());
             Tick();
         }catch(Exception ex){RefreshCooling();Report("asus.cooling",ex.Message,true);}
+    }
+    void ChangeWindowsCooling(bool active){
+        try{PlanSettings.SelectCoolingPolicy(active);RefreshCooling();}
+        catch(Exception ex){RefreshCooling();Report("windows.cooling",ex.Message,true);}
     }
     void OpenArmouryCrate(){
         try{AsusCooling.OpenArmouryCrate();}
@@ -485,6 +550,14 @@ internal sealed class TrayApp : ApplicationContext {
     }
     void Tick() {
         error=""; count=0;
+        if(!Safety.Safe&&(DateTime.UtcNow-hardwareRefresh).TotalSeconds>=5){
+            hardwareRefresh=DateTime.UtcNow;
+            if(hardware.Refresh()){
+                UpdateTouchpad();
+                if(home!=null)home.RefreshCapabilities();
+                flyout.RefreshCapabilities();
+            }
+        }
         if(codexWidget!=null)codexWidget.Tick();
         if(flyout.Visible){RefreshPanel();flyout.Invalidate();}
         else RefreshCooling();
@@ -533,12 +606,20 @@ internal sealed class TrayApp : ApplicationContext {
         int desktopLaunchFrames=desktopEffects==null?0:desktopEffects.LastDesktopFrames;
         string key=mode+":"+count+":"+executionFlags+":"+lidClosed+":"+lidOverride+":"+powerSelection.Current+":"+saverOn+":"+profile+":"+coolingAvailability+":"+coolingProfile+":"+animationPlus+":"+desktopAnimationReady+":"+desktopAnimation+":"+desktopLaunches+":"+error;
         if(key!=lastStatus || (DateTime.UtcNow-heartbeat).TotalSeconds>=60) {
-            try {File.WriteAllText(Path.Combine(folder,"tray-status.json"),json.Serialize(new {mode=mode==0?"green-always":mode==1?"yellow-tasks":"red-off",activeTasks=count,holding=holding,displayHeld=(executionFlags&DisplayRequired)!=0,lidClosed=lidClosed,lidOverride=lidOverride!=null,powerProfile=profile,powerPreset=powerSelection.Current.ToString(),maxSaver=powerSelection.Current==PowerPreset.Economy,windowsEnergySaver=saverOn,coolingProfile=coolingProfile,coolingAvailability=coolingSupported?coolingAvailability.ToString():null,sideButtonReady=sideButton!=null,sideButtonHoldReady=sideButton!=null&&sideButton.HoldReady,sideButtonStoreBlocked=sideButton!=null&&sideButton.StoreLaunchBlocked,animationPlus=animationPlus,desktopAnimationReady,desktopAnimation,desktopLaunches,desktopLaunchFrames,safeMode=Safety.Safe,error=error,pid=Process.GetCurrentProcess().Id,updatedUtc=DateTime.UtcNow.ToString("o")}));} catch{}
+            try {File.WriteAllText(Path.Combine(folder,"tray-status.json"),json.Serialize(new {mode=mode==0?"green-always":mode==1?"yellow-tasks":"red-off",activeTasks=count,holding=holding,displayHeld=(executionFlags&DisplayRequired)!=0,lidClosed=lidClosed,lidOverride=lidOverride!=null,powerProfile=profile,powerPreset=powerSelection.Current.ToString(),maxSaver=powerSelection.Current==PowerPreset.Economy,windowsEnergySaver=saverOn,coolingProfile=coolingProfile,coolingAvailability=hardware.Asus?coolingAvailability.ToString():null,windowsCoolingPolicy=windowsCoolingPolicy,panelShortcut=preferences.Shortcut.ToString(),panelShortcutReady=launcherHotkey!=null&&launcherHotkey.Active,touchpadReady=smartPad!=null,touchScreenReady=home!=null&&home.Active,sideButtonReady=sideButton!=null,sideButtonHoldReady=sideButton!=null&&sideButton.HoldReady,sideButtonStoreBlocked=sideButton!=null&&sideButton.StoreLaunchBlocked,animationPlus=animationPlus,desktopAnimationReady,desktopAnimation,desktopLaunches,desktopLaunchFrames,safeMode=Safety.Safe,error=error,pid=Process.GetCurrentProcess().Id,updatedUtc=DateTime.UtcNow.ToString("o")}));} catch{}
             lastStatus=key;heartbeat=DateTime.UtcNow;
         }
     }
     static void Clean(string name,Action action){try{action();}catch(Exception ex){try{Safety.Audit("shutdown."+name,null,null,ex.Message);}catch{}}}
     protected override void ExitThreadCore() {
+        Clean("panel.launchers",()=>{
+            if(launcherHotkey!=null)launcherHotkey.Dispose();
+            if(launcherTray!=null){
+                var menu=launcherTray.ContextMenuStrip;var icon=launcherTray.Icon;
+                launcherTray.Visible=false;launcherTray.Dispose();
+                if(menu!=null)menu.Dispose();if(icon!=null)icon.Dispose();
+            }
+        });
         Clean("keyboard.resume",()=>{if(keyboardResume!=null)keyboardResume.Dispose();});
         Clean("stop-wait",()=>{if(stopWait!=null)stopWait.Unregister(null);stopEvent.Dispose();});
         Clean("side-panel",()=>{if(sidePanelWait!=null)sidePanelWait.Unregister(null);if(sidePanelEvent!=null)sidePanelEvent.Dispose();});
@@ -636,7 +717,7 @@ internal static class Program {
         if(args.Length>0 && args[0]=="--self-test")return TrayApp.SelfTest();
 
         if(args.Length>1 && args[0]=="--export-icon"){TrayApp.ExportIcon(args[1]);return 0;}
-        if(args.Length>1 && args[0]=="--render-preview"){Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);using(var app=new TrayApp(true))app.RenderPreview(args[1],args.Length==3&&args[2]=="settings");return 0;}
+        if(args.Length>1 && args[0]=="--render-preview"){Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);bool desktop=args.Length==3&&args[2]=="desktop";using(var app=new TrayApp(true,false,false,desktop))app.RenderPreview(args[1],args.Length==3);return 0;}
         string command=args.Length>0?args[0]:"--side-panel";
         bool maintenance=command=="--safe-mode"||command=="--rollback"||command=="--resume"||command=="--carousel-test"||command=="--power-test"||command=="--restore-lid-sleep";
         if(maintenance)try{using(var stop=EventWaitHandle.OpenExisting("Local\\LumaStopV2"))stop.Set();}catch(WaitHandleCannotBeOpenedException){}

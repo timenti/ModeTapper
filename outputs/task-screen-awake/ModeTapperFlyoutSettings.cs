@@ -7,20 +7,38 @@ using System.Windows.Forms;
 
 internal sealed partial class LumaFlyout
 {
-    const int SettingsHeight=523,FooterHeight=43;
-    static readonly int[] SectionHeights={137,97,117,114,96,111,70};
-    static readonly string[] SectionNames={"Экран","Производительность","Охлаждение","VPN","Жесты","Виджеты","Камеры"};
+    const int SettingsHeight=666,FooterHeight=43;
+    static readonly int[] SectionHeights={137,97,117,114,130,111,70};
+    static readonly string[] SectionNames={"Экран","Питание","Охлаждение","VPN","Жесты","Виджеты","Камеры"};
     readonly ModeTapperPreferences preferences;
+    readonly ModeTapperDeviceSupport hardware;
+    readonly Func<PanelShortcut,bool> saveShortcut;
+    readonly Func<bool> shortcutActive;
+    readonly Func<PowerPreset,bool> powerAvailable;
+    readonly Action openOverview;
     readonly Timer settingsTimer=new Timer{Interval=15};
     readonly Stopwatch settingsTime=new Stopwatch();
     bool settingsOpen,lightTheme;
+    internal bool RecordingShortcut {get;private set;}
+    string shortcutMessage;
     string settingsError;
     float settingsProgress,settingsFrom;
 
     bool SectionAvailable(PanelSection section){
-        return section==PanelSection.Cooling?showCooling:
-            section==PanelSection.Vpn?showVpn:
-            section==PanelSection.Cameras?showCameras:true;
+        return SectionProblem(section)==null;
+    }
+    string SectionProblem(PanelSection section){
+        if(section==PanelSection.Cooling&&!UsesAsusCooling&&!getWindowsCooling().HasValue)
+            return "Недоступно системе";
+        if(section==PanelSection.Power&&!powerAvailable(PowerPreset.Balance)&&
+            !powerAvailable(PowerPreset.Economy)&&!powerAvailable(PowerPreset.Maximum))return "Нет схем питания";
+        if(section==PanelSection.Vpn&&!showVpn)return "Нужен компонент";
+        if(section==PanelSection.Cameras){
+            if(!showCameras)return "Нужен компонент";
+            if(getCamera()==CameraState.Missing)return "Камера не найдена";
+            if(getCamera()==CameraState.Unknown)return "Камеры недоступны";
+        }
+        return null;
     }
     bool SectionVisible(PanelSection section){return SectionAvailable(section)&&preferences.Shows(section);}
 
@@ -50,6 +68,7 @@ internal sealed partial class LumaFlyout
     void ToggleSettings(){
         settingsFrom=settingsProgress;
         settingsOpen=!settingsOpen;
+        RecordingShortcut=false;shortcutMessage=null;
         hover=-1;
         keyboardItem=(int)(settingsOpen?Item.CloseSettings:Item.Settings);
         AccessibleName=settingsOpen?Translate("Настройки")+" · ModeTapper":"ModeTapper";
@@ -61,6 +80,7 @@ internal sealed partial class LumaFlyout
 
     void FitSettings(){
         if(slideDisplay.IsEmpty){Fit(Screen.PrimaryScreen.WorkingArea);return;}
+        Fit(FillsSide(slideDisplay)?slideDisplay:slideWorkArea);
         EdgePlacement(slideDisplay,MenuSize,displayRotation,out edgeLocation,out edgeOrigin);
         ResizeMenu();
         if(Visible&&!slide.Enabled)Location=edgeLocation;
@@ -80,6 +100,7 @@ internal sealed partial class LumaFlyout
     void ResetSettings(){
         settingsTimer.Stop();
         settingsOpen=false;
+        RecordingShortcut=false;shortcutMessage=null;
         settingsProgress=0;
         AccessibleName="ModeTapper";
     }
@@ -92,14 +113,15 @@ internal sealed partial class LumaFlyout
     Rectangle SettingsBounds(Item item){
         if(item==Item.Settings)return GearBounds;
         if(item==Item.CloseSettings)return SheetRect(291,12,34,32);
-        if(item>=Item.ThemeSystem&&item<=Item.ThemeDark)return SheetRect(28+101*((int)item-(int)Item.ThemeSystem),83,96,34);
-        if(item==Item.LanguageRu||item==Item.LanguageEn)return SheetRect(item==Item.LanguageRu?28:181,147,147,34);
+        if(item==Item.Shortcut)return SheetRect(157,95,171,34);
+        if(item>=Item.ThemeSystem&&item<=Item.ThemeDark)return SheetRect(28+101*((int)item-(int)Item.ThemeSystem),178,96,34);
+        if(item==Item.LanguageRu||item==Item.LanguageEn)return SheetRect(item==Item.LanguageRu?28:181,242,147,34);
         if(item>=Item.ShowScreen&&item<=Item.ShowCameras){
             int index=(int)item-(int)Item.ShowScreen;
-            return SheetRect(28+(index%2)*153,218+(index/2)*32,147,28);
+            return SheetRect(28+(index%2)*153,313+(index/2)*36,147,33);
         }
-        if(item==Item.Update)return SheetRect(46,428,264,40);
-        return SheetRect(65,473,226,29);
+        if(item==Item.Update)return SheetRect(46,570,264,40);
+        return SheetRect(65,615,226,29);
     }
 
     void DrawGear(Graphics g){
@@ -135,39 +157,53 @@ internal sealed partial class LumaFlyout
         }
         TextAt(g,"Настройки",heading,text,SheetRect(28,13,232,30));
         SettingsButton(g,Item.CloseSettings,"×");
-        TextAt(g,"Тема",small,muted,SheetRect(28,61,300,19));
+        TextAt(g,String.IsNullOrEmpty(hardware.Model)?"Модель устройства неизвестна":hardware.Model,button,text,
+            SheetRect(28,45,300,20),TextFormatFlags.EndEllipsis);
+        TextAt(g,hardware.OperatingSystem,small,muted,SheetRect(28,66,300,18),TextFormatFlags.EndEllipsis);
+        TextAt(g,"Вызов панели",regular,text,SheetRect(28,95,122,34));
+        SettingsButton(g,Item.Shortcut,RecordingShortcut?"Нажмите клавишу…":preferences.Shortcut.ToString(),RecordingShortcut);
+        string shortcutHint=shortcutMessage??(RecordingShortcut?"Esc — отмена":shortcutActive()?null:"Сочетание недоступно. Выберите другое.");
+        if(shortcutHint!=null)TextAt(g,shortcutHint,small,muted,SheetRect(28,133,300,18),TextFormatFlags.EndEllipsis);
+        TextAt(g,"Тема",small,muted,SheetRect(28,156,300,19));
         SettingsButton(g,Item.ThemeSystem,"Как в Windows",preferences.Theme==PanelTheme.System);
         SettingsButton(g,Item.ThemeLight,"Светлая",preferences.Theme==PanelTheme.Light);
         SettingsButton(g,Item.ThemeDark,"Тёмная",preferences.Theme==PanelTheme.Dark);
-        TextAt(g,"Язык",small,muted,SheetRect(28,125,300,19));
+        TextAt(g,"Язык",small,muted,SheetRect(28,220,300,19));
         SettingsButton(g,Item.LanguageRu,"Русский",!preferences.English);
         SettingsButton(g,Item.LanguageEn,"English",preferences.English);
-        TextAt(g,"Разделы панели",small,muted,SheetRect(28,193,300,20));
+        TextAt(g,"Разделы панели",small,muted,SheetRect(28,288,300,20));
 
         for(int i=0;i<SectionNames.Length;i++){
             var item=Item.ShowScreen+i;
             var bounds=SettingsBounds(item);
-            bool shown=preferences.Shows((PanelSection)i),available=SectionAvailable((PanelSection)i);
+            string problem=SectionProblem((PanelSection)i);
+            bool shown=preferences.Shows((PanelSection)i),available=problem==null;
             FillRound(g,bounds,available&&hover==(int)item?hoverSurface:surface,7);
             DrawKeyboardFocus(g,(int)item,bounds);
-            TextAt(g,SectionNames[i],small,available?text:faint,SheetRect(38+(i%2)*153,218+(i/2)*32,109,28),TextFormatFlags.EndEllipsis);
-            var marker=SheetRect(152+(i%2)*153,226+(i/2)*32,12,12);
-            using(var outline=TrayApp.RoundRect(marker,S(3)))
-            using(var pen=new Pen(available?muted:faint,Math.Max(1,S(.7f))))g.DrawPath(pen,outline);
-            if(shown&&available)TextAt(g,"✓",small,text,marker,TextFormatFlags.HorizontalCenter);
+            int x=38+(i%2)*153,y=313+(i/2)*36;
+            TextAt(g,SectionNames[i],small,available?text:faint,SheetRect(x,y+(available?0:1),available?109:128,available?33:17),TextFormatFlags.EndEllipsis);
+            if(!available)TextAt(g,problem,compact,muted,SheetRect(x,y+17,129,14),TextFormatFlags.EndEllipsis);
+            else{
+                var marker=SheetRect(x+114,y+10,12,12);
+                using(var outline=TrayApp.RoundRect(marker,S(3)))
+                using(var pen=new Pen(muted,Math.Max(1,S(.7f))))g.DrawPath(pen,outline);
+                if(shown)TextAt(g,"✓",small,text,marker,TextFormatFlags.HorizontalCenter);
+            }
         }
+        TextAt(g,hardware.Touchpad?"Тачпад обнаружен":"Нет Precision Touchpad",compact,muted,SheetRect(28,458,147,20),TextFormatFlags.EndEllipsis);
+        TextAt(g,hardware.TouchScreen?"Сенсор обнаружен":"Нет сенсорного экрана",compact,muted,SheetRect(181,458,147,20),TextFormatFlags.EndEllipsis);
 
-        var product=SheetRect(28,352,300,152);
+        var product=SheetRect(28,491,300,153);
         FillRound(g,product,surface,13);
         using(var brand=new Font("Segoe UI Semibold",25*scale,FontStyle.Regular,GraphicsUnit.Pixel))
-            TextAt(g,"ModeTapper",brand,text,SheetRect(39,359,278,37),TextFormatFlags.HorizontalCenter);
+            TextAt(g,"ModeTapper",brand,text,SheetRect(39,502,278,37),TextFormatFlags.HorizontalCenter);
         TextAt(g,Translate("Версия")+" "+typeof(LumaFlyout).Assembly.GetName().Version.ToString(3),button,muted,
-            SheetRect(39,395,278,22),TextFormatFlags.HorizontalCenter);
+            SheetRect(39,538,278,22),TextFormatFlags.HorizontalCenter);
         SettingsButton(g,Item.Update,updates.Button,true,true);
         if(updates.ManualAvailable)SettingsButton(g,Item.ManualDownload,"Скачать вручную");
         string status=settingsError??updates.DisplayStatus(preferences.English);
         if(!String.IsNullOrEmpty(status)){
-            var where=updates.ManualAvailable?SheetRect(34,505,288,16):SheetRect(34,473,288,24);
+            var where=updates.ManualAvailable?SheetRect(34,646,288,16):SheetRect(34,615,288,24);
             TextAt(g,status,small,settingsError==null?muted:red,where,TextFormatFlags.HorizontalCenter|TextFormatFlags.EndEllipsis);
         }
         g.Restore(saved);
@@ -175,6 +211,7 @@ internal sealed partial class LumaFlyout
 
     void SelectSetting(Item item){
         if(item==Item.CloseSettings){ToggleSettings();return;}
+        if(item==Item.Shortcut){RecordingShortcut=!RecordingShortcut;shortcutMessage=null;return;}
         if(item==Item.Update){settingsError=null;updates.Run();return;}
         if(item==Item.ManualDownload){Hide();updates.OpenRelease();return;}
         var theme=preferences.Theme;
@@ -192,12 +229,46 @@ internal sealed partial class LumaFlyout
         catch(UnauthorizedAccessException){settingsError=Translate("Не удалось сохранить настройки.");}
     }
 
+    void RecordShortcut(Keys keyData){
+        Keys key=keyData&Keys.KeyCode;
+        if(PanelShortcut.IsModifier(key))return;
+        if(key==Keys.Escape){RecordingShortcut=false;shortcutMessage=null;Invalidate();return;}
+        var shortcut=PanelShortcut.Read(keyData);
+        try{
+            if(!shortcut.Valid||!saveShortcut(shortcut)){
+                shortcutMessage="Клавиша занята или зарезервирована Windows.";
+                Invalidate();return;
+            }
+            RecordingShortcut=false;
+            shortcutMessage="Клавиша сохранена.";
+        }catch(IOException){shortcutMessage="Не удалось сохранить настройки.";}
+        catch(UnauthorizedAccessException){shortcutMessage="Не удалось сохранить настройки.";}
+        Invalidate();
+    }
+
+    internal void RefreshCapabilities(){if(Visible)FitSettings();Invalidate();}
+
     string Translate(string value){
         string translated;
         return preferences.English&&value!=null&&EnglishWords.TryGetValue(value,out translated)?translated:value;
     }
 
     static readonly Dictionary<string,string> EnglishWords=new Dictionary<string,string>{
+        {"Вызов панели","Open panel"},{"Нажмите клавишу…","Press a key…"},{"Esc — отмена","Esc to cancel"},
+        {"Сочетание недоступно. Выберите другое.","Shortcut unavailable. Choose another one."},
+        {"Клавиша занята или зарезервирована Windows.","Key is in use or reserved by Windows."},
+        {"Клавиша сохранена.","Shortcut saved."},{"Модель устройства неизвестна","Device model unknown"},
+        {"Недоступно системе","No OS cooling control"},{"Питание","Power"},
+        {"Политика Windows","Windows policy"},{"Пассивное","Passive"},{"Активное","Active"},
+        {"Windows сначала снижает нагрузку","Windows reduces load first"},
+        {"Windows сначала задействует вентиляторы","Windows uses fans first"},
+        {"Сбалансированный профиль ASUS","ASUS balanced profile"},
+        {"Нет схем питания","No power plans"},{"Нужен компонент","Component not installed"},
+        {"Камера не найдена","No camera found"},{"Камеры недоступны","Cameras unavailable"},
+        {"Драйвер ASUS","ASUS driver"},{"ASUS ограничивает охлаждение в этом положении.","ASUS limits cooling in this position."},
+        {"Нет Precision Touchpad","No Precision Touchpad"},{"Нет сенсорного экрана","No touchscreen"},
+        {"Тачпад обнаружен","Touchpad detected"},{"Сенсор обнаружен","Touchscreen detected"},
+        {"Схема питания недоступна","Power plan unavailable"},{"Карусель окон","Window carousel"},
         {"Настройки","Settings"},{"Тема","Theme"},{"Как в Windows","System"},{"Светлая","Light"},{"Тёмная","Dark"},
         {"Язык","Language"},{"Разделы панели","Panel sections"},{"Версия","Version"},
         {"Экран","Display"},{"Режим экрана","Display mode"},{"Всегда включён","Always on"},{"Во время задач","During tasks"},

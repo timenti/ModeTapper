@@ -29,6 +29,25 @@ internal sealed class RawTouchpad : NativeWindow,IDisposable {
  readonly ushort readerUsage;IntPtr buffer=Marshal.AllocHGlobal(4096);uint capacity=4096;bool disposed;
  internal event Action<TouchFrame> Frame;internal event Action<string> Failed;
  internal int DeviceCount {get{return pads.Count;}}internal long Reports {get;private set;}
+ internal static bool HasUsage(ushort usage){
+  uint count=0,size=(uint)Marshal.SizeOf(typeof(Device));
+  if(GetRawInputDeviceList(null,ref count,size)==UInt32.MaxValue||count==0)return false;
+  var list=new Device[count];
+  uint found=GetRawInputDeviceList(list,ref count,size);
+  if(found==UInt32.MaxValue)return false;
+  const uint infoSize=32,deviceInfo=0x2000000b;
+  IntPtr info=Marshal.AllocHGlobal((int)infoSize);
+  try{
+   for(int i=0;i<found;i++){
+    var device=list[i];if(device.Type!=2)continue;
+    uint bytes=infoSize;
+    Marshal.WriteInt32(info,(int)infoSize);
+    if(GetRawInputDeviceInfo(device.Handle,deviceInfo,info,ref bytes)!=UInt32.MaxValue&&
+       Marshal.ReadInt16(info,20)==13&&Marshal.ReadInt16(info,22)==usage)return true;
+   }
+   return false;
+  }finally{Marshal.FreeHGlobal(info);}
+ }
  internal RawTouchpad(ushort usage=5,bool allowMissing=false){readerUsage=usage;CreateHandle(new CreateParams{Parent=new IntPtr(-3)});try{Refresh();if(pads.Count==0&&!allowMissing)throw new InvalidOperationException("Precision Touchpad не найден");var registration=new[]{new Registration{Page=13,Usage=readerUsage,Flags=0x2100,Window=Handle}};if(!RegisterRawInputDevices(registration,1,(uint)Marshal.SizeOf(typeof(Registration))))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());}catch{Dispose();throw;}}
  void Refresh(){
   foreach(var pad in pads.Values)Marshal.FreeHGlobal(pad.Data);pads.Clear();uint count=0,size=(uint)Marshal.SizeOf(typeof(Device));GetRawInputDeviceList(null,ref count,size);var list=new Device[count];if(GetRawInputDeviceList(list,ref count,size)==UInt32.MaxValue)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());

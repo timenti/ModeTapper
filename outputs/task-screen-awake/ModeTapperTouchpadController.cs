@@ -99,8 +99,9 @@ internal sealed class EdgeToast : Form {
 internal sealed class EdgeActuator : IDisposable {
  sealed class Request {internal int Id;internal PadEdge Edge;internal double Delta;}
  readonly object sync=new object();readonly AutoResetEvent signal=new AutoResetEvent(false);readonly Thread worker;readonly KeyboardLight keyboard;
+ readonly Screen targetDisplay;
  Request pending;volatile bool ending;internal event Action<PadEdge,int> Updated;internal event Action<int,string> Failed;
- internal EdgeActuator(string folder){keyboard=new KeyboardLight(folder);worker=new Thread(Run){IsBackground=true,Name="ModeTapper device controls"};worker.Start();}
+ internal EdgeActuator(string folder,Screen display=null){targetDisplay=display;keyboard=new KeyboardLight(folder);worker=new Thread(Run){IsBackground=true,Name="ModeTapper device controls"};worker.Start();}
  internal void Schedule(int id,PadEdge edge,double delta){lock(sync){if(ending)return;pending=new Request{Id=id,Edge=edge,Delta=delta};}try{signal.Set();}catch(ObjectDisposedException){}}
  void Run(){DisplayLight display=null;SoundLevel sound=null;int currentId=-1,failedId=-1,baseline=0,lastValue=-1;long lastSent=0;
   bool keyboardAwake=false;
@@ -112,7 +113,7 @@ internal sealed class EdgeActuator : IDisposable {
      if(display!=null){display.Dispose();display=null;}
      if(sound!=null){sound.Dispose();sound=null;}
      currentId=request.Id;lastValue=-1;keyboardAwake=false;
-     if(request.Edge==PadEdge.Screen){display=new DisplayLight();baseline=DisplayLight.Get();}
+     if(request.Edge==PadEdge.Screen){display=new DisplayLight(targetDisplay);baseline=display.Level;}
      else if(request.Edge==PadEdge.Volume){sound=new SoundLevel();baseline=sound.Get();}
      else baseline=keyboard.BeginGesture();
     }

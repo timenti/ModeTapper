@@ -222,9 +222,29 @@ internal sealed class KeyboardLightResume : NativeWindow,IDisposable {
 
 internal sealed class DisplayLight : IDisposable {
  readonly ManagementObject target;
- internal DisplayLight(){using(var search=new ManagementObjectSearcher("root\\WMI","SELECT * FROM WmiMonitorBrightnessMethods WHERE Active=TRUE"))using(var list=search.Get()){foreach(ManagementObject item in list){target=new ManagementObject(item.Path.Path);break;}}if(target==null)throw new InvalidOperationException("Регулировка яркости экрана недоступна");}
+ readonly MonitorBrightness monitor;
+ internal DisplayLight(Screen display=null){
+  display=display??Screen.PrimaryScreen;
+  if(display.Primary){
+   string identity=MonitorBrightness.Identity(display);
+   bool single=Screen.AllScreens.Length==1;
+   try{
+    using(var search=new ManagementObjectSearcher("root\\WMI","SELECT * FROM WmiMonitorBrightnessMethods WHERE Active=TRUE"))
+    using(var list=search.Get())foreach(ManagementObject item in list)using(item){
+     if(!single&&!MonitorBrightness.MatchesWmi(identity,Convert.ToString(item["InstanceName"])))continue;
+     target=new ManagementObject(item.Path.Path);break;
+    }
+   }catch(ManagementException){}
+  }
+  if(target==null)monitor=new MonitorBrightness(display);
+ }
+ internal int Level {get{return monitor==null?Get():monitor.Percent;}}
  internal static int Get(){using(var search=new ManagementObjectSearcher("root\\WMI","SELECT CurrentBrightness FROM WmiMonitorBrightness WHERE Active=TRUE"))using(var list=search.Get()){foreach(ManagementObject item in list)using(item)return Convert.ToInt32(item["CurrentBrightness"]);}throw new InvalidOperationException("Яркость экрана недоступна");}
- internal void Set(int level){Safety.Change("display.brightness",()=>Get().ToString(),text=>SetRaw(Int32.Parse(text)),Math.Max(0,Math.Min(100,level)).ToString());}
+ internal void Set(int level){
+  level=Math.Max(0,Math.Min(100,level));
+  if(monitor!=null){monitor.SetPercent(level);return;}
+  Safety.Change("display.brightness",()=>Get().ToString(),text=>SetRaw(Int32.Parse(text)),level.ToString());
+ }
  internal static bool WaitForLevel(Func<int> read,int level,Action wait){
   for(int attempt=0;attempt<10;attempt++){
    if(read()==level)return true;
@@ -239,7 +259,91 @@ internal sealed class DisplayLight : IDisposable {
   // The WMI provider can return before the panel reports the new value.
   if(!WaitForLevel(Get,level,()=>Thread.Sleep(30)))throw new InvalidOperationException("Экран не подтвердил яркость "+level+"%");
  }
- public void Dispose(){target.Dispose();}
+ public void Dispose(){if(target!=null)target.Dispose();if(monitor!=null)monitor.Dispose();}
+}
+
+internal sealed class MonitorBrightness : IDisposable {
+ internal const string Prefix="display.ddc.";
+ const uint BrightnessCapability=2;
+ [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]
+ struct PhysicalMonitor {
+  public IntPtr Handle;
+  [MarshalAs(UnmanagedType.ByValTStr,SizeConst=128)]public string Description;
+ }
+ [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]
+ struct DisplayDevice {
+  public int Size;
+  [MarshalAs(UnmanagedType.ByValTStr,SizeConst=32)]public string Name;
+  [MarshalAs(UnmanagedType.ByValTStr,SizeConst=128)]public string Description;
+  public uint Flags;
+  [MarshalAs(UnmanagedType.ByValTStr,SizeConst=128)]public string Id;
+  [MarshalAs(UnmanagedType.ByValTStr,SizeConst=128)]public string Key;
+ }
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern bool EnumDisplayDevices(string device,uint index,ref DisplayDevice info,uint flags);
+ [DllImport("user32.dll")]static extern IntPtr MonitorFromPoint(System.Drawing.Point point,uint flags);
+ [DllImport("dxva2.dll")]static extern bool GetNumberOfPhysicalMonitorsFromHMONITOR(IntPtr display,out uint count);
+ [DllImport("dxva2.dll")]static extern bool GetPhysicalMonitorsFromHMONITOR(IntPtr display,uint count,[Out]PhysicalMonitor[] monitors);
+ [DllImport("dxva2.dll")]static extern bool GetMonitorCapabilities(IntPtr monitor,out uint capabilities,out uint temperatures);
+ [DllImport("dxva2.dll")]static extern bool GetMonitorBrightness(IntPtr monitor,out uint min,out uint current,out uint max);
+ [DllImport("dxva2.dll")]static extern bool SetMonitorBrightness(IntPtr monitor,uint value);
+ [DllImport("dxva2.dll")]static extern bool DestroyPhysicalMonitor(IntPtr monitor);
+
+ readonly IntPtr handle;
+ readonly string key;
+ readonly uint minimum,maximum;
+ internal static string Identity(Screen display){
+  var device=new DisplayDevice{Size=Marshal.SizeOf(typeof(DisplayDevice))};
+  return EnumDisplayDevices(display.DeviceName,0,ref device,1)&&!String.IsNullOrEmpty(device.Id)?
+      Prefix+device.Id.ToUpperInvariant():null;
+ }
+ internal static bool MatchesWmi(string identity,string instance){
+  if(String.IsNullOrEmpty(identity)||String.IsNullOrEmpty(instance))return false;
+  int name=identity.IndexOf("DISPLAY#",StringComparison.OrdinalIgnoreCase);
+  int end=name<0?-1:identity.IndexOf("#{",name,StringComparison.Ordinal);
+  return end>name&&instance.StartsWith(identity.Substring(name,end-name).Replace('#','\\')+"_",
+      StringComparison.OrdinalIgnoreCase);
+ }
+ internal static MonitorBrightness Find(string key){
+  foreach(var display in Screen.AllScreens)if(String.Equals(Identity(display),key,StringComparison.Ordinal))
+   return new MonitorBrightness(display);
+  throw new InvalidOperationException("Монитор для восстановления яркости не подключён.");
+ }
+ internal MonitorBrightness(Screen display){
+  key=Identity(display);
+  var bounds=display.Bounds;
+  IntPtr logical=MonitorFromPoint(new System.Drawing.Point(bounds.Left+bounds.Width/2,bounds.Top+bounds.Height/2),0);
+  uint count;
+  if(key==null||logical==IntPtr.Zero||!GetNumberOfPhysicalMonitorsFromHMONITOR(logical,out count)||count!=1)
+   throw new InvalidOperationException("Монитор не предоставляет управление яркостью.");
+  var physical=new PhysicalMonitor[1];
+  if(!GetPhysicalMonitorsFromHMONITOR(logical,1,physical))
+   throw new InvalidOperationException("Монитор не предоставляет управление яркостью.");
+  handle=physical[0].Handle;
+  uint caps,temperatures,current;
+  if(!GetMonitorCapabilities(handle,out caps,out temperatures)||(caps&BrightnessCapability)==0||
+      !GetMonitorBrightness(handle,out minimum,out current,out maximum)||maximum<=minimum){
+   Dispose();
+   throw new InvalidOperationException("Монитор не предоставляет яркость через DDC/CI.");
+  }
+ }
+ uint ReadLevel(){
+  uint min,current,max;
+  if(!GetMonitorBrightness(handle,out min,out current,out max)||min!=minimum||max!=maximum)
+   throw new InvalidOperationException("Монитор не подтвердил текущую яркость.");
+  return current;
+ }
+ internal int Percent {get{return (int)Math.Round((ReadLevel()-(double)minimum)*100/(maximum-minimum));}}
+ internal string Read(){return ReadLevel().ToString(CultureInfo.InvariantCulture);}
+ internal void Write(string text){
+  uint value=UInt32.Parse(text,CultureInfo.InvariantCulture);
+  if(value<minimum||value>maximum||!SetMonitorBrightness(handle,value))
+   throw new InvalidOperationException("Монитор отклонил изменение яркости.");
+ }
+ internal void SetPercent(int level){
+  uint value=minimum+(uint)Math.Round((maximum-minimum)*level/100.0);
+  Safety.Change(key,Read,Write,value.ToString(CultureInfo.InvariantCulture));
+ }
+ public void Dispose(){DestroyPhysicalMonitor(handle);}
 }
 [ComImport,Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]internal class AudioDevices {}
 [ComImport,Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]internal interface IAudioDevices {

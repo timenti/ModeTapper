@@ -13,7 +13,7 @@ internal enum AsusCoolingAvailability { DriverUnavailable, LockedByAsus, Ready, 
 
 internal static class AsusCooling {
     const uint ReadStatus=0x53545344, SetStatus=0x53564544;
-    const uint ThermalPolicy=0x00120075, DriverControl=0x0022240C;
+    const uint ThermalPolicy=0x00120075, VivoThermalPolicy=0x00110019, DriverControl=0x0022240C;
     const int ConvertibleSlateMode=0x2003;
     const string ArmouryCrate=@"shell:AppsFolder\B9ECED6F.ArmouryCrate_qmba6cd70vzyy!App";
     const string ArmouryProfile=@"HKEY_LOCAL_MACHINE\SOFTWARE\ASUS\Armoury Crate Service\ThrottlePlugin\External";
@@ -26,8 +26,7 @@ internal static class AsusCooling {
     static extern int GetSystemMetrics(int metric);
 
     internal static bool IsSupportedModel(){
-        string product=Convert.ToString(Registry.GetValue(@"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\BIOS","SystemProductName",""));
-        return product.StartsWith("ROG Flow Z13 GZ302EA",StringComparison.OrdinalIgnoreCase);
+        return ModeTapperDeviceSupport.IsAsusFlow();
     }
 
     static SafeFileHandle Open(){
@@ -38,8 +37,8 @@ internal static class AsusCooling {
         throw new Win32Exception(error);
     }
 
-    static uint Call(SafeFileHandle handle,uint method,uint value){
-        uint[] request={method,8,ThermalPolicy,value};
+    static uint Call(SafeFileHandle handle,uint method,uint endpoint,uint value){
+        uint[] request={method,8,endpoint,value};
         var response=new uint[4];
         uint returned;
         if(!DeviceIoControl(handle,DriverControl,request,16,response,16,out returned,IntPtr.Zero))
@@ -48,9 +47,17 @@ internal static class AsusCooling {
         return response[0];
     }
 
-    static bool HasThermalPolicy(SafeFileHandle handle){
-        uint value=Call(handle,ReadStatus,0);
-        return (value&0xFFFF0000)==0x00010000;
+    static uint ThermalEndpoint(SafeFileHandle handle){
+        if(Present(Call(handle,ReadStatus,ThermalPolicy,0)))return ThermalPolicy;
+        if(Present(Call(handle,ReadStatus,VivoThermalPolicy,0)))return VivoThermalPolicy;
+        return 0;
+    }
+
+    static bool Present(uint value){return (value&0xFFFF0000)==0x00010000;}
+
+    internal static uint DriverPreset(AsusCoolingPreset preset,bool vivo){
+        if(!vivo||preset==AsusCoolingPreset.Performance)return (uint)preset;
+        return preset==AsusCoolingPreset.Silent?1u:2u;
     }
 
     static bool IsLocked(){
@@ -66,7 +73,7 @@ internal static class AsusCooling {
 
     static AsusCoolingAvailability ResolveAvailability(){
         if(!IsLocked())return AsusCoolingAvailability.Ready;
-        if(GetSystemMetrics(ConvertibleSlateMode)==0)return AsusCoolingAvailability.LockedByAsus;
+        if(!IsSupportedModel()||GetSystemMetrics(ConvertibleSlateMode)==0)return AsusCoolingAvailability.LockedByAsus;
         var screen=Screen.PrimaryScreen;
         if(screen==null||screen.Bounds.Width<=screen.Bounds.Height)return AsusCoolingAvailability.LockedByAsus;
         int rotation=DisplayOrientation.Read(screen.DeviceName);
@@ -78,10 +85,8 @@ internal static class AsusCooling {
 
     internal static AsusCoolingAvailability Availability(){
         try{
-            var availability=ResolveAvailability();
-            if(!CanSelect(availability))return availability;
             using(var handle=Open()){
-                return HasThermalPolicy(handle)?availability:AsusCoolingAvailability.DriverUnavailable;
+                return ThermalEndpoint(handle)!=0?ResolveAvailability():AsusCoolingAvailability.DriverUnavailable;
             }
         }catch(Win32Exception){return AsusCoolingAvailability.DriverUnavailable;}
         catch(InvalidOperationException){return AsusCoolingAvailability.DriverUnavailable;}
@@ -92,17 +97,18 @@ internal static class AsusCooling {
 
     internal static int Select(AsusCoolingPreset preset){
         Safety.Require();
-        if(!IsSupportedModel()||!Enum.IsDefined(typeof(AsusCoolingPreset),preset))
+        if(!ModeTapperDeviceSupport.IsAsus()||!Enum.IsDefined(typeof(AsusCoolingPreset),preset))
             throw new InvalidOperationException("Профиль охлаждения недоступен.");
         if(preset==AsusCoolingPreset.Turbo&&!PowerModes.OnAC)
             throw new InvalidOperationException("Турбо доступен при подключении к сети.");
         using(var handle=Open()){
             var availability=ResolveAvailability();
             if(!CanSelect(availability))throw new InvalidOperationException("ASUS ограничила смену профиля. Проверьте Armoury Crate.");
-            if(!HasThermalPolicy(handle))throw new InvalidOperationException("Драйвер ASUS не поддерживает переключение профиля.");
+            uint endpoint=ThermalEndpoint(handle);
+            if(endpoint==0)throw new InvalidOperationException("Драйвер ASUS не поддерживает переключение профиля.");
             Safety.Audit("asus.cooling",null,preset.ToString(),availability==AsusCoolingAvailability.ReadyWithPostureMismatch?
                 "intent with confirmed desktop posture":"intent");
-            if(Call(handle,SetStatus,(uint)preset)!=1){
+            if(Call(handle,SetStatus,endpoint,DriverPreset(preset,endpoint==VivoThermalPolicy))!=1){
                 Safety.Audit("asus.cooling",null,preset.ToString(),"driver rejected preset");
                 throw new InvalidOperationException("Драйвер ASUS отклонил профиль.");
             }

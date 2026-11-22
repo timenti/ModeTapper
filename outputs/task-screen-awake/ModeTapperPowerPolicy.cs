@@ -12,7 +12,8 @@ internal static class PlanSettings {
     const string LidBaseline="plan.lid-default.", LidHold="plan.lid-keep.", IdleHold="plan.idle-keep.", Saver="plan.energy-saver.", BoostHold="plan.boost-off.";
     const string SaverAC="max-power.ac", SaverDC="max-power.dc";
     const string SaverOverride="plan.energy-saver-switch";
-    const string DisplayHold="plan.display-keep.";
+    const string DisplayHold="plan.display-keep.", Cooling="plan.cooling-policy.";
+    internal const string ActivePlan="plan.active-scheme";
     static readonly Guid Buttons=new Guid("4f971e89-eebd-4455-a8de-9e59040e7347");
     static readonly Guid Lid=new Guid("5ca83367-6e45-459f-a27b-476b1d01c936");
     static readonly Guid Sleep=new Guid("238c9fa8-0aad-41ed-83f4-97be242c8f20");
@@ -23,8 +24,16 @@ internal static class PlanSettings {
     static readonly Guid Threshold=new Guid("e69653ca-cf7f-4f05-aa73-cb833fa90ad4");
     static readonly Guid Processor=new Guid("54533251-82be-4824-96c1-47b60b740d00");
     static readonly Guid BoostMode=new Guid("be337238-0d82-4146-a960-4f3749d470c7");
+    static readonly Guid SystemCooling=new Guid("94d3a615-a899-4ac5-ae2b-e4d8f634367f");
+    [StructLayout(LayoutKind.Sequential)]struct SystemPowerInformation {
+        public uint MaxIdlenessAllowed,Idleness,TimeRemaining;
+        public byte CoolingMode;
+    }
+    [DllImport("powrprof.dll")]static extern uint CallNtPowerInformation(int level,IntPtr input,uint inputSize,
+        out SystemPowerInformation information,uint outputSize);
     [DllImport("powrprof.dll")]static extern uint PowerGetActiveScheme(IntPtr root,out IntPtr scheme);
     [DllImport("powrprof.dll")]static extern uint PowerSetActiveScheme(IntPtr root,ref Guid scheme);
+    [DllImport("powrprof.dll")]static extern uint PowerEnumerate(IntPtr root,IntPtr scheme,IntPtr subgroup,uint access,uint index,out Guid item,ref uint size);
     [DllImport("powrprof.dll")]static extern uint PowerReadACValueIndex(IntPtr root,ref Guid scheme,ref Guid group,ref Guid setting,out uint value);
     [DllImport("powrprof.dll")]static extern uint PowerReadDCValueIndex(IntPtr root,ref Guid scheme,ref Guid group,ref Guid setting,out uint value);
     [DllImport("powrprof.dll")]static extern uint PowerWriteACValueIndex(IntPtr root,ref Guid scheme,ref Guid group,ref Guid setting,uint value);
@@ -45,6 +54,15 @@ internal static class PlanSettings {
         IntPtr address;PowerModes.Check(PowerGetActiveScheme(IntPtr.Zero,out address));
         try{return (Guid)Marshal.PtrToStructure(address,typeof(Guid));}finally{LocalFree(address);}
     }
+    internal static bool HasScheme(Guid scheme){
+        const uint accessScheme=16;
+        for(uint index=0;;index++){
+            uint size=16;
+            Guid item;
+            if(PowerEnumerate(IntPtr.Zero,IntPtr.Zero,IntPtr.Zero,accessScheme,index,out item,ref size)!=0)return false;
+            if(item==scheme)return true;
+        }
+    }
     static bool GetPlanSetting(string key,out Guid scheme,out Guid group,out Guid setting){
         setting=Lid;group=Buttons;scheme=Guid.Empty;
         string prefix=key.StartsWith(LidHold,StringComparison.Ordinal)?LidHold:key.StartsWith(LidBaseline,StringComparison.Ordinal)?LidBaseline:null;
@@ -52,10 +70,12 @@ internal static class PlanSettings {
         if(prefix==null&&key.StartsWith(DisplayHold,StringComparison.Ordinal)){prefix=DisplayHold;group=Display;setting=DisplayTimeout;}
         if(prefix==null&&key.StartsWith(Saver,StringComparison.Ordinal)){prefix=Saver;group=Energy;setting=Threshold;}
         if(prefix==null&&key.StartsWith(BoostHold,StringComparison.Ordinal)){prefix=BoostHold;group=Processor;setting=BoostMode;}
+        if(prefix==null&&key.StartsWith(Cooling,StringComparison.Ordinal)){prefix=Cooling;group=Processor;setting=SystemCooling;}
         return prefix!=null&&Guid.TryParse(key.Substring(prefix.Length),out scheme);
     }
     internal static bool IsManaged(string key){return key==SaverAC||key==SaverDC||key.StartsWith("plan.",StringComparison.Ordinal);}
     internal static string Read(string key){
+        if(key==ActivePlan)return Active().ToString();
         if(key==SaverAC||key==SaverDC)return PowerModes.ReadSide(key==SaverAC);
         if(key==SaverOverride)return WindowsEnergySaver.Read();
         Guid scheme,group,setting;
@@ -65,6 +85,7 @@ internal static class PlanSettings {
         return ac.ToString(CultureInfo.InvariantCulture)+","+dc.ToString(CultureInfo.InvariantCulture);
     }
     internal static void Write(string key,string value){
+        if(key==ActivePlan){Guid schemeToSet=Guid.Parse(value);PowerModes.Check(PowerSetActiveScheme(IntPtr.Zero,ref schemeToSet));return;}
         if(key==SaverAC||key==SaverDC){PowerModes.WriteSide(key==SaverAC,value);return;}
         if(key==SaverOverride){WindowsEnergySaver.Write(value);return;}
         Guid scheme,group,setting;
@@ -78,10 +99,42 @@ internal static class PlanSettings {
     static void Restore(string key){if(!Safety.RestoreOne(key,()=>Read(key),text=>Write(key,text),true))throw new InvalidOperationException("Настройка питания была изменена вне ModeTapper");}
     internal static void RecoverOverrides(){
         foreach(string key in Safety.TrackedKeys())
-            if(key.StartsWith(LidHold,StringComparison.Ordinal)||key.StartsWith(IdleHold,StringComparison.Ordinal)||key.StartsWith(DisplayHold,StringComparison.Ordinal)||key.StartsWith(Saver,StringComparison.Ordinal)||key.StartsWith(BoostHold,StringComparison.Ordinal)||key==SaverAC||key==SaverDC||key==SaverOverride)
+            if(key.StartsWith(LidHold,StringComparison.Ordinal)||key.StartsWith(IdleHold,StringComparison.Ordinal)||key.StartsWith(DisplayHold,StringComparison.Ordinal)||key.StartsWith(Saver,StringComparison.Ordinal)||key.StartsWith(BoostHold,StringComparison.Ordinal)||key==SaverAC||key==SaverDC||key==SaverOverride||key==ActivePlan)
                 try{Safety.RestoreOne(key,()=>Read(key),text=>Write(key,text),true);}
                 catch(Exception ex){Safety.Pause("Power recovery failed: "+key+": "+ex.Message);}
     }
+    static bool HasSystemCooling(){
+        const int systemPowerInformation=12;
+        SystemPowerInformation information;
+        return CallNtPowerInformation(systemPowerInformation,IntPtr.Zero,0,out information,
+            (uint)Marshal.SizeOf(typeof(SystemPowerInformation)))==0&&information.CoolingMode<=1;
+    }
+
+    static bool TryReadCooling(Guid scheme,out uint ac,out uint dc){
+        Guid group=Processor,setting=SystemCooling;
+        ac=dc=0;
+        return PowerReadACValueIndex(IntPtr.Zero,ref scheme,ref group,ref setting,out ac)==0&&ac<=1&&
+            PowerReadDCValueIndex(IntPtr.Zero,ref scheme,ref group,ref setting,out dc)==0&&dc<=1;
+    }
+
+    internal static int? ReadCoolingPolicy(){
+        if(!HasSystemCooling())return null;
+        try{
+            uint ac,dc;
+            if(TryReadCooling(Active(),out ac,out dc))return (int)(PowerModes.OnAC?ac:dc);
+        }catch(Win32Exception){}
+        return null;
+    }
+
+    internal static void SelectCoolingPolicy(bool active){
+        Safety.Require();
+        Guid scheme=Active();
+        uint ac,dc;
+        if(!HasSystemCooling()||!TryReadCooling(scheme,out ac,out dc))
+            throw new InvalidOperationException("Системная политика охлаждения недоступна.");
+        Change(Cooling+scheme,active?"1,1":"0,0");
+    }
+
     internal static void EnableWindowsLidSleep(){Change(LidBaseline+Active(),"1,1");}
     internal static string KeepLidOpen(string previous){
         string scheme=Active().ToString();
@@ -181,12 +234,38 @@ internal static class WindowsEnergySaver {
 internal enum PowerPreset { Economy, Balance, Maximum }
 
 internal sealed class PowerSelection : IDisposable {
+    static readonly Guid[] ClassicSchemes={
+        new Guid("a1841308-3541-4fab-bc81-f71556f20b4a"),
+        new Guid("381b4222-f694-41f0-9685-ff5bb260df2e"),
+        new Guid("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c")
+    };
     string saverScheme,boostScheme;
     Guid? appliedPlan;
+    bool classic,classicSelected;
     internal PowerSelection(){Current=PowerPreset.Balance;}
     internal PowerPreset Current {get;private set;}
+    bool UsesClassic {
+        get {
+            if(classic||!PowerModes.OverlayAvailable())return true;
+            Guid scheme=PlanSettings.Active();
+            return scheme==ClassicSchemes[0]||scheme==ClassicSchemes[2];
+        }
+    }
+    internal bool Available(PowerPreset preset){
+        try{return !UsesClassic||PlanSettings.HasScheme(ClassicSchemes[(int)preset]);}
+        catch(Win32Exception){return false;}
+    }
 
     internal void Select(PowerPreset preset){
+        if(UsesClassic){
+            Guid target=ClassicSchemes[(int)preset];
+            if(!PlanSettings.HasScheme(target))throw new InvalidOperationException("Эта схема питания отсутствует в Windows.");
+            if(appliedPlan.HasValue)ReleaseModernSettings();
+            Safety.Change(PlanSettings.ActivePlan,()=>PlanSettings.Read(PlanSettings.ActivePlan),
+                value=>PlanSettings.Write(PlanSettings.ActivePlan,value),target.ToString());
+            classic=classicSelected=true;Current=preset;appliedPlan=null;
+            return;
+        }
         Guid plan=PlanSettings.Active();
         if(boostScheme!=null&&(preset!=PowerPreset.Economy||boostScheme!=plan.ToString()))ReleaseMaxSavings();
         if(preset==PowerPreset.Economy){
@@ -215,6 +294,11 @@ internal sealed class PowerSelection : IDisposable {
     }
 
     public void Dispose(){
+        if(classicSelected)Safety.RestoreOne(PlanSettings.ActivePlan,()=>PlanSettings.Read(PlanSettings.ActivePlan),
+            value=>PlanSettings.Write(PlanSettings.ActivePlan,value),true);
+        if(appliedPlan.HasValue||boostScheme!=null||saverScheme!=null)ReleaseModernSettings();
+    }
+    void ReleaseModernSettings(){
         try{ReleaseMaxSavings();}
         finally{
             try{saverScheme=PlanSettings.SetEnergySaver(saverScheme,null);}

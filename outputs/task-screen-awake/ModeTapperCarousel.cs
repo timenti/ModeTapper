@@ -536,7 +536,9 @@ internal sealed class AppCarousel : Form {
  double scale,lastTime,startX,startY,lastX,lastY,basePosition,velocity,velocityY,lastMoveTime;int mode,original,finishIndex,closeIndex=-1,closeChecks;bool touching,dragging,activateAfter,disposed,highResolution,isolateAfter,closing,closePending;Rectangle labelBounds=Rectangle.Empty;double renderRail=Double.NaN,renderOpen=Double.NaN,renderLift=Double.NaN;
  internal int LastInputMode {get;private set;}internal double LastFlickPixels {get;private set;}internal double LastFlickPages {get;private set;}internal double LastFlickStart {get;private set;}internal int LastFlickCount {get;private set;}internal int LastFlickTarget {get;private set;}
  internal IntPtr PreferredWindow {set{catalog.PreferredWindow=value;}}
- internal bool MouseInputEnabled {get;set;}
+ internal Screen TargetDisplay {get;set;}
+ internal bool RawScreenTouch {get;set;}
+ [DllImport("user32.dll")]static extern IntPtr GetMessageExtraInfo();
  internal bool UseRawPadScroll {get;set;}
  internal bool AnimationPlus {get;set;}
  bool mouseContact,overviewEnterPending;
@@ -660,7 +662,7 @@ internal sealed class AppCarousel : Form {
   openness.Velocity=direction*Math.Max(0,Math.Min(Math.Abs(distance)*22,direction*openness.Velocity));
  }
  void SetSceneBounds(bool quick){
-  var screen=Screen.PrimaryScreen;
+  var screen=TargetDisplay??Screen.PrimaryScreen;
   Rectangle area=screen.WorkingArea;
   clipTiles=Screen.AllScreens.Length>1;
   taskbarTop=area.Bottom;
@@ -1062,7 +1064,7 @@ internal sealed class AppCarousel : Form {
  void WarmBackdrop(){
   backdropWarmup.Stop();
   if(Visible||disposed)return;
-  Bounds=Screen.PrimaryScreen.Bounds;
+  Bounds=(TargetDisplay??Screen.PrimaryScreen).Bounds;
   scale=GetDpiForSystem()/96.0;
   try{EnsureBackground();}
   catch(ExternalException){backdropBounds=Rectangle.Empty;}
@@ -1164,7 +1166,7 @@ internal sealed class AppCarousel : Form {
   idle.Stop();idle.Start();StartAnimation();
  }
  bool ScrollHorizontally(int delta){
-  if(delta==0||!MouseInputEnabled||!Overview||activateAfter||touching||closing||closePending)return false;
+  if(delta==0||!Overview||activateAfter||touching||closing||closePending)return false;
   if(!wheelScrolling){
    wheelScrolling=true;inertia.Active=false;wheelPosition=rail.Value;
   }
@@ -1181,7 +1183,7 @@ internal sealed class AppCarousel : Form {
   rail.Target=CarouselMotion.Clamp((int)Math.Round(rail.Value),cards.Count);
   StartAnimation();
  }
- protected override void OnMouseDown(MouseEventArgs e){base.OnMouseDown(e);if(MouseInputEnabled&&e.Button==MouseButtons.Left&&Overview&&Begin(e.X,e.Y)){mouseContact=true;Capture=true;}}
+ protected override void OnMouseDown(MouseEventArgs e){base.OnMouseDown(e);const long pointerSignature=0xff515700,pointerMask=0xffffff00,touchFlag=0x80;long extra=GetMessageExtraInfo().ToInt64();if(RawScreenTouch&&(extra&pointerMask)==pointerSignature&&(extra&touchFlag)!=0)return;if(e.Button==MouseButtons.Left&&Overview&&Begin(e.X,e.Y)){mouseContact=true;Capture=true;}}
  protected override void OnMouseMove(MouseEventArgs e){base.OnMouseMove(e);if(mouseContact)MoveFinger(e.X,e.Y);}
  protected override void OnMouseUp(MouseEventArgs e){base.OnMouseUp(e);if(!mouseContact||e.Button!=MouseButtons.Left)return;mouseContact=false;Capture=false;MoveFinger(e.X,e.Y);EndFinger();}
  protected override void OnMouseCaptureChanged(EventArgs e){base.OnMouseCaptureChanged(e);if(mouseContact&&!Capture){mouseContact=false;CancelImmediate();}}

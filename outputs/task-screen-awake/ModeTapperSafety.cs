@@ -86,6 +86,8 @@ internal static class Safety {
  internal static int Rollback(){Pause("Explicit rollback");if(!readable)return 2;int failures=0;foreach(string key in new List<string>(entries.Keys))try{if(!RestoreTracked(key))failures++;}catch(Exception ex){failures++;Audit(key,null,null,"restore failed: "+ex.Message);}return failures==0?0:2;}
  static bool RestoreTracked(string key){
   if(key=="sound")using(var sound=new SoundLevel())return RestoreOne(key,sound.Snapshot,sound.Restore,confirm:sound.Confirm);
+  if(key.StartsWith(MonitorBrightness.Prefix,StringComparison.Ordinal))
+   using(var monitor=MonitorBrightness.Find(key))return RestoreOne(key,monitor.Read,monitor.Write);
   return RestoreOne(key,()=>Read(key),value=>Write(key,value));
  }
  static string Read(string key){if(PlanSettings.IsManaged(key))return PlanSettings.Read(key);if(key==NativeWindowAnimation.Setting)return NativeWindowAnimation.Read();if(key=="power.ac"||key=="power.dc")return PowerModes.ReadSide(key=="power.ac");if(key=="proxy")return WindowsProxy.Canonical(WindowsProxy.Query());if(key=="keyboard.brightness")return new KeyboardLight(folder).Level.ToString();if(key=="display.brightness")return DisplayLight.Get().ToString();if(key=="sound")using(var sound=new SoundLevel())return sound.Snapshot();throw new InvalidOperationException("Unknown rollback key "+key);}
