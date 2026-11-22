@@ -1,4 +1,4 @@
-param(
+﻿param(
     [System.Security.Cryptography.X509Certificates.X509Certificate2]$SigningCertificate,
     [string]$TimestampServer,
     [switch]$UseBuiltPayload,
@@ -15,6 +15,7 @@ $root = Split-Path -Parent $PSScriptRoot
 if (!$UseBuiltPayload) { & (Join-Path $PSScriptRoot 'Build-ModeTapper.ps1') }
 Sign-ReleaseFile (Join-Path $PSScriptRoot 'ModeTapper.exe')
 Sign-ReleaseFile (Join-Path $PSScriptRoot 'ModeTapper-camera-control.exe')
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $source = 'outputs/task-screen-awake'
 $files = [ordered]@{
