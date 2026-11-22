@@ -15,8 +15,8 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle("Установка ModeTapper")]
 [assembly: AssemblyProduct("ModeTapper")]
 [assembly: AssemblyCompany("TIMENTI")]
-[assembly: AssemblyVersion("1.24.20.0")]
-[assembly: AssemblyFileVersion("1.24.20.0")]
+[assembly: AssemblyVersion("1.24.21.0")]
+[assembly: AssemblyFileVersion("1.24.21.0")]
 
 internal static class ModeTapperSetup
 {
@@ -26,12 +26,7 @@ internal static class ModeTapperSetup
         if (args.Length == 1 && args[0] == "--verify-package")
             return InstallFiles.Verify() ? 0 : 1;
         if (args.Length == 2 && args[0] == "--install-update")
-        {
-            int pid;
-            return Int32.TryParse(args[1], out pid) && pid > 0 && InstallFiles.RunUpdate(pid) ? 0 : 1;
-        }
-        if (args.Length == 1 && args[0] == "--quiet")
-            return InstallFiles.Run(InstallFiles.Existing ?? InstallFiles.DefaultPath, true, true, false, (step, text) => {}) == null ? 0 : 1;
+            return 1;
 
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
@@ -545,7 +540,6 @@ internal static class InstallFiles
     const string Marker = "modetapper-managed-install.txt";
     const string Program = "ModeTapper.exe";
     const string Camera = "ModeTapper-camera-control.exe";
-    const string UpdateResult = "modetapper-update-result.txt";
     const string VpnTemplate = @"vpn\rules.template.pac";
     static readonly string Legacy = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Luma");
     internal static readonly string DefaultPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ModeTapper");
@@ -603,18 +597,7 @@ internal static class InstallFiles
         return entry;
     }
 
-    internal static bool RunUpdate(int pid)
-    {
-        try
-        {
-            string existing = Existing;
-            if (existing == null) return false;
-            return Run(existing, false, false, false, (step, text) => {}, pid) == null;
-        }
-        catch (Exception) { return false; }
-    }
-
-    internal static string Run(string selected, bool cameras, bool vpn, bool repair, Action<int, string> progress, int updatePid = 0)
+    internal static string Run(string selected, bool cameras, bool vpn, bool repair, Action<int, string> progress)
     {
         using (var gate = new Mutex(false, @"Local\ModeTapperSetup"))
         {
@@ -622,17 +605,16 @@ internal static class InstallFiles
             try { acquired = gate.WaitOne(0); }
             catch (AbandonedMutexException) { acquired = true; }
             if (!acquired) return "Установщик ModeTapper уже запущен.";
-            try { return Install(selected, cameras, vpn, repair, progress, updatePid); }
+            try { return Install(selected, cameras, vpn, repair, progress); }
             finally { gate.ReleaseMutex(); }
         }
     }
 
-    static string Install(string selected, bool cameras, bool vpn, bool repair, Action<int, string> progress, int updatePid)
+    static string Install(string selected, bool cameras, bool vpn, bool repair, Action<int, string> progress)
     {
         string directory = null, backup = null, previous = null;
         var changed = new List<string>();
         var createdDirectories = new List<string>();
-        bool fromPanel = updatePid != 0;
         bool restart = false, retainBackup = false;
         using (var guard = OpenAsusGuard())
         try
@@ -660,9 +642,6 @@ internal static class InstallFiles
             {
                 foreach (string name in PackageFiles) Entry(archive, name);
                 var version = InstalledVersion(existing);
-                if (fromPanel && (version == null || version >= PackageVersion ||
-                    !UpdatePublisher.MatchesInstalledPublisher(executable, Assembly.GetExecutingAssembly().Location)))
-                    return "Не удалось подтвердить подпись или версию обновления.";
                 if (version != null && version > PackageVersion)
                     return "Установлена более новая версия ModeTapper.";
                 bool copyCore = repair || version == null || version < PackageVersion;
@@ -670,15 +649,14 @@ internal static class InstallFiles
                 bool copyVpn = (vpn || HasVpn(existing)) && (copyCore || !HasVpn(existing));
                 if (!copyCore && !copyCamera && !copyVpn) return null;
                 progress(25, "Подготавливаем обновление…");
-                if (fromPanel) { StopUpdateParent(executable, updatePid); restart = true; }
-                else if (previous != null) restart = StopPrevious(previous);
+                if (previous != null) restart = StopPrevious(previous);
                 backup = Path.Combine(Path.GetTempPath(), "ModeTapper-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(backup);
                 CreateTextIfMissing(directory, Marker, "ModeTapper managed installation", changed);
                 progress(46, "Копируем программу и компоненты…");
                 if (copyCore)
-                    foreach (string name in CoreFiles) Copy(Entry(archive, name), directory, name, backup, changed, fromPanel && name == Program);
-                if (copyCamera) Copy(Entry(archive, Camera), directory, Camera, backup, changed, fromPanel);
+                    foreach (string name in CoreFiles) Copy(Entry(archive, name), directory, name, backup, changed);
+                if (copyCamera) Copy(Entry(archive, Camera), directory, Camera, backup, changed);
                 InitializeProfile(directory, previous, copyVpn, changed, createdDirectories);
                 if (copyVpn)
                 {
@@ -690,14 +668,10 @@ internal static class InstallFiles
                 }
             }
             progress(74, "Добавляем ModeTapper в меню «Пуск»…");
-            if (!fromPanel)
-            {
-                RegisterShortcuts(executable);
-                using (var key = Registry.CurrentUser.CreateSubKey(AppKey)) key.SetValue("InstallLocation", directory);
-            }
+            RegisterShortcuts(executable);
+            using (var key = Registry.CurrentUser.CreateSubKey(AppKey)) key.SetValue("InstallLocation", directory);
             progress(92, "Запускаем ModeTapper…");
-            if (fromPanel) WriteUpdateResult(directory, "Установлена версия " + PackageVersion.ToString(3) + ".");
-            int pid = Start(executable, fromPanel ? "--side-panel" : "--background");
+            int pid = Start(executable, "--background");
             if (guard != null) WaitForTray(directory, pid);
             return null;
         }
@@ -723,8 +697,7 @@ internal static class InstallFiles
             retainBackup = !restored;
             if (restored && restart && previous != null)
             {
-                if (fromPanel) WriteUpdateResult(directory, "Ошибка обновления. Доступно ручное скачивание.");
-                try { Start(previous, fromPanel ? "--side-panel" : "--background"); } catch { }
+                try { Start(previous, "--background"); } catch { }
             }
             return ex.Message + (restored ? "" : " Часть файлов осталась в папке восстановления " + backup);
         }
@@ -770,8 +743,10 @@ internal static class InstallFiles
                 catch (System.ComponentModel.Win32Exception) { }
             }
             if (running.Count == 0) return false;
-            using (var stop = Process.Start(new ProcessStartInfo(path, "--stop") { UseShellExecute = false, CreateNoWindow = true }))
-                if (!stop.WaitForExit(5000)) throw new IOException("Закройте ModeTapper перед обновлением.");
+            EventWaitHandle stop;
+            if (!EventWaitHandle.TryOpenExisting(@"Local\LumaStopV2", out stop))
+                throw new IOException("Закройте ModeTapper перед обновлением.");
+            using (stop) stop.Set();
             foreach (var process in running)
                 if (!process.WaitForExit(10000)) throw new IOException("Закройте ModeTapper перед обновлением.");
             return true;
@@ -779,26 +754,7 @@ internal static class InstallFiles
         finally { foreach (var process in processes) process.Dispose(); }
     }
 
-    static void StopUpdateParent(string path, int pid)
-    {
-        using (var app = Process.GetProcessById(pid))
-        {
-            if (!SamePath(app.MainModule.FileName, path))
-                throw new IOException("Не найден запущенный ModeTapper.");
-            using (var stop = EventWaitHandle.OpenExisting(@"Local\LumaStopV2")) stop.Set();
-            if (!app.WaitForExit(15000))
-                throw new IOException("Закройте ModeTapper перед обновлением.");
-        }
-    }
-
-    static void WriteUpdateResult(string directory, string message)
-    {
-        try { File.WriteAllText(Path.Combine(directory, UpdateResult), message); }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
-    }
-
-    static void Copy(ZipArchiveEntry entry, string directory, string name, string backup, List<string> changed, bool verifyPublisher = false)
+    static void Copy(ZipArchiveEntry entry, string directory, string name, string backup, List<string> changed)
     {
         string target = Path.Combine(directory, name);
         string staging = Path.Combine(directory, ".install-" + Guid.NewGuid().ToString("N"));
@@ -806,14 +762,6 @@ internal static class InstallFiles
         try
         {
             entry.ExtractToFile(staging);
-            if (verifyPublisher)
-            {
-                var info = FileVersionInfo.GetVersionInfo(staging);
-                Version version;
-                if (info.ProductName != "ModeTapper" || !Version.TryParse(info.FileVersion, out version) || version != PackageVersion ||
-                    !UpdatePublisher.MatchesInstalledPublisher(Assembly.GetExecutingAssembly().Location, staging))
-                    throw new InvalidDataException("Не удалось проверить подпись компонента " + name + ".");
-            }
             if (File.Exists(target)) File.Replace(staging, target, null); else File.Move(staging, target);
             changed.Add(name);
         }

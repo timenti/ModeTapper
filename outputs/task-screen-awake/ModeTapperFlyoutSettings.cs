@@ -213,7 +213,7 @@ internal sealed partial class LumaFlyout
         if(item==Item.CloseSettings){ToggleSettings();return;}
         if(item==Item.Shortcut){RecordingShortcut=!RecordingShortcut;shortcutMessage=null;return;}
         if(item==Item.Update){settingsError=null;updates.Run();return;}
-        if(item==Item.ManualDownload){Hide();updates.OpenRelease();return;}
+        if(item==Item.ManualDownload){updates.OpenRelease();return;}
         var theme=preferences.Theme;
         bool english=preferences.English;
         int sections=preferences.Sections;
@@ -287,7 +287,7 @@ internal sealed partial class LumaFlyout
         {"Часть доступна","Some available"},{"Камер нет","No cameras"},{"Недоступно","Unavailable"},
         {"Открыть камеру","Open camera"},{"Включить","Turn on"},{"Выключить","Turn off"},
         {"Безопасный режим","Safe mode"},{"Возобновить работу ModeTapper","Resume ModeTapper"},{"Выход","Exit"},
-        {"Проверить обновления","Check for updates"},{"Обновить сейчас","Update now"},{"Скачать вручную","Download manually"},
+        {"Проверить обновления","Check for updates"},{"Обновить","Update"},{"Скачать вручную","Download manually"},
         {"Проверяем…","Checking…"},{"Обновление…","Updating…"},
         {"Не удалось сохранить настройки.","Could not save settings."},
         {"Датчик поворота Windows недоступен","Windows orientation sensor is unavailable"},

@@ -13,8 +13,8 @@ using System.Windows.Forms;
 [assembly:System.Reflection.AssemblyProduct("ModeTapper")]
 [assembly:System.Reflection.AssemblyDescription("Экран, питание и выборочные маршруты VPN")]
 [assembly:System.Reflection.AssemblyCompany("TIMENTI")]
-[assembly:System.Reflection.AssemblyVersion("1.24.20.0")]
-[assembly:System.Reflection.AssemblyFileVersion("1.24.20.0")]
+[assembly:System.Reflection.AssemblyVersion("1.24.21.0")]
+[assembly:System.Reflection.AssemblyFileVersion("1.24.21.0")]
 
 internal static class PowerModes {
     internal static readonly Guid Best=new Guid("ded574b5-45a0-4f42-8737-46345c09c238");
@@ -253,7 +253,7 @@ internal sealed class TrayApp : ApplicationContext {
             coolingProfile=(int)AsusCoolingPreset.Performance;
         }
         if(!preview&&hardware.Asus)preferredCooling=LoadCoolingPreset();
-        updates=new ModeTapperUpdates(folder,preview);
+        updates=new ModeTapperUpdates();
         flyout=new LumaFlyout(()=>mode,SetMode,()=>powerSelection.Current,ChangePower,
             ()=>coolingAvailability,()=>coolingProfile,ChangeCooling,()=>windowsCoolingPolicy,ChangeWindowsCooling,OpenArmouryCrate,
             ()=>ExitThread(),vpnInstalled,()=>preview||(vpn!=null&&vpn.Enabled),()=>vpn==null?vpnError:vpn.Error,()=>vpn!=null&&vpn.Waiting,
