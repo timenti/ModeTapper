@@ -106,7 +106,7 @@ internal sealed class SetupWindow : Form
 
         product = CenterLabel("ModeTapper", Ink, headingFont);
         string releaseVersion = ModeTapperVersion.Display(InstallFiles.PackageVersion);
-        version = CenterLabel(releaseVersion + "  ·  Windows 11 x64", Muted, detailFont);
+        version = CenterLabel("Версия " + releaseVersion + "  ·  Windows 11 x64", Muted, detailFont);
         AddRow(layout, product, 38);
         AddRow(layout, version, 19);
         compactBrand = new ProgressBrand(Icon, releaseVersion, titleFont, detailFont, D(28), D(8), D(21), D(7));

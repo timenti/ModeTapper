@@ -1,5 +1,4 @@
 using System;
-using System.Globalization;
 using System.Text.RegularExpressions;
 
 internal static class ModeTapperVersion
@@ -8,9 +7,7 @@ internal static class ModeTapperVersion
 
     internal static string Display(Version version)
     {
-        if (version.Build > 0) return version.ToString(3);
-        if (version.Minor > 0) return version.ToString(2);
-        return version.Major.ToString(CultureInfo.InvariantCulture);
+        return new Version(version.Major, version.Minor, Math.Max(0, version.Build)).ToString(3);
     }
 
     internal static bool TryReadTag(string tag, out Version version)
