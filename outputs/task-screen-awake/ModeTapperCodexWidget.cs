@@ -357,6 +357,8 @@ internal sealed class DesktopCodexCard : Control {
     [DllImport("user32.dll")]static extern IntPtr GetMessageExtraInfo();
     [DllImport("user32.dll")]static extern bool ScreenToClient(IntPtr window,ref Point point);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern IntPtr FindWindowEx(IntPtr parent,IntPtr after,string type,string name);
+    [DllImport("user32.dll")]static extern IntPtr GetWindow(IntPtr window,uint command);
+    [DllImport("user32.dll")]static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")]static extern bool SetWindowPos(IntPtr window,IntPtr after,int x,int y,int width,int height,uint flags);
     static readonly CultureInfo Russian=CultureInfo.GetCultureInfo("ru-RU");
     readonly IntPtr desktop,dpiContext;
@@ -629,9 +631,22 @@ internal sealed class DesktopCodexCard : Control {
     bool CoversPoint(int x,int y){
         return WindowFromPoint(PointToScreen(new Point(x,y)))==Handle;
     }
+    void KeepAboveDesktopIcons(){
+        IntPtr icons=FindWindowEx(desktop,IntPtr.Zero,"SysListView32",null);
+        if(icons==IntPtr.Zero||!IsWindowVisible(icons))return;
+        const uint previousSibling=3,noMoveResizeOrActivate=0x13;
+        // Explorer can raise the icon list after the cards have already been placed.
+        for(IntPtr sibling=GetWindow(Handle,previousSibling);sibling!=IntPtr.Zero;sibling=GetWindow(sibling,previousSibling)){
+            if(sibling!=icons)continue;
+            SetWindowPos(Handle,IntPtr.Zero,0,0,0,0,noMoveResizeOrActivate);
+            return;
+        }
+    }
     internal bool UpdateExposure(){
+        bool ready=Visible&&IsHandleCreated;
+        if(ready)KeepAboveDesktopIcons();
         int inset=S(12),middleX=Width/2,middleY=Height/2;
-        bool next=Visible&&IsHandleCreated&&Width>2*inset&&Height>2*inset&&
+        bool next=ready&&Width>2*inset&&Height>2*inset&&
             (CoversPoint(middleX,middleY)||CoversPoint(inset,inset)||CoversPoint(Width-inset-1,inset)||
              CoversPoint(inset,Height-inset-1)||CoversPoint(Width-inset-1,Height-inset-1));
         if(next==exposed)return false;
